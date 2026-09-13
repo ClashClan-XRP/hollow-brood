@@ -1,27 +1,17 @@
 # Hollow Brood
 
-A top-down colony action game. You are the **Matriarch** of a moonlit forest hollow. Human raiders come for the nest. Wild **scorpions hunt anyone** — villagers, spiderlings, and the queen — instead of tunnel-visioning the player.
+**Play now:** [clashclan-xrp.github.io/hollow-brood](https://clashclan-xrp.github.io/hollow-brood/)
 
-Inspired by the fantasy of growing a spider colony, with original art, systems, and a three-faction war.
+A slow widescreen empire-adventure. You are the **Matriarch**. Workers forage. Defenders hold silk-linked ground. Attackers rove, or follow the queen. Far woods hide meadows, bee hives, wasp nests, and scorpion burrows.
 
-## Play
+## Castes
 
-- **Move** — WASD / arrows / left stick / left-side touch
-- **Bite** — click or Space
-- **Venom** — V or right-click
-- **Silk web** — Q (slows raiders, less so scorpions)
-- **Lay eggs** — E near the nest (costs meat)
-- **Evolve** — spend meat on Fang, Carapace, Silk, Brood
+- **Workers (E)** — harvest food and material; evolve into harvesters, builders, and wings
+- **Attackers (R)** — biters that can take melee, siege, or air
+- **Defenders (F)** — stay on the nest perimeter; melee or tank
+- **Heir (G)** — an adolescent queen who can silk-link captured towers
+- **Tower (B)** — silent until the queen (or a princess) silk-links it into the net
 
-Wrap raiders by killing them as a spider. Haul cocoons to the nest for meat. Scorpion kills steal that silk — they do not leave cocoons.
+Go **below (N)** at the hollow to expand rooms and send brood through the chrysalis. Food upkeep grows with the army; empty larders send units into hibernation.
 
-Scorpions pick the **nearest** living prey of another faction. Watch the rust line from a scorpion to its target; it will peel off you to sting a raider, or ignore you to wreck a spiderling.
-
-## Run
-
-```bash
-npm install
-npm run dev
-```
-
-Built with TanStack Start, React, and Canvas 2D.
+The mini-map uses fog of war. Click it to look. Explore to wake new hives — and clear every egg, or they hatch from below.

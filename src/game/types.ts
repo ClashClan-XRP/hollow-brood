@@ -1,39 +1,148 @@
-export const WORLD_W = 1792;
-export const WORLD_H = 1008;
-export const NEST_POS = { x: 896, y: 520 };
-export const HUMAN_SPAWN = { x: 1680, y: 510 };
-export const BURROW_POS = { x: 310, y: 790 };
+export const WORLD_W = 3600;
+export const WORLD_H = 2200;
+export const LANDSCAPE_W = 820;
+export const LANDSCAPE_H = 460;
+export const MIN_ZOOM = 1.15;
+export const NEST_POS = { x: 1080, y: 1180 };
 export const FIXED_DT = 1 / 60;
-export const WALK_MARGIN = 70;
+export const WALK_MARGIN = 80;
+export const FOG_CELL = 48;
+export const NEST_PERIM = 320;
+export const TOWER_PERIM = 260;
+export const SILK_LINK_RANGE = 420;
+/** Queen / heir must stand this close to a mute tower to splice silk. */
+export const SILK_STAND = 78;
+export const SILK_COST = 2;
 
-export const TREE_SPOTS = [
-  { x: 430, y: 220 },
-  { x: 1280, y: 200 },
-  { x: 250, y: 560 },
-  { x: 1540, y: 640 },
-  { x: 560, y: 880 },
-  { x: 1180, y: 900 },
-] as const;
+export const SITES = {
+  meadow: { x: 2140, y: 720, r: 180 },
+  bee: { x: 2860, y: 520, r: 150 },
+  wasp: { x: 3020, y: 1640, r: 160 },
+  scorpion: { x: 420, y: 1720, r: 140 },
+  berries: { x: 1560, y: 640, r: 90 },
+} as const;
 
-export type Faction = "spider" | "human" | "scorpion" | "none";
+export type Faction = "spider" | "human" | "scorpion" | "bee" | "wasp" | "herbivore" | "none";
 export type Kind =
   | "queen"
   | "brood"
   | "human"
   | "scorpion"
+  | "bee"
+  | "wasp"
+  | "herbivore"
   | "egg"
   | "cocoon"
   | "nest"
+  | "hive"
+  | "tower"
   | "web"
   | "shot"
   | "fx"
   | "tree"
   | "burrow"
-  | "pickup";
+  | "pickup"
+  | "node";
 
-export type HumanRole = "raider" | "torch";
+export type Caste = "worker" | "attacker" | "defender" | "queen" | "none";
+export type Job = "none" | "harvest" | "build" | "guard" | "rove" | "follow" | "hibernate" | "haul";
+export type Evo =
+  | "biter"
+  | "melee"
+  | "tank"
+  | "siege"
+  | "air"
+  | "harvester"
+  | "builder"
+  | "none";
+export type Stage = "adult" | "adolescent" | "chrysalis";
+export type UnitRole = Caste | "raider" | "torch" | "pack" | "siege" | "none";
+export type GameMode = "title" | "playing" | "paused" | "over" | "succession";
+export type ViewMode = "world" | "nest";
+export type Difficulty = "easy" | "standard" | "difficult";
+export type RoomType = "hatchery" | "food" | "material" | "chrysalis" | "chamber";
+export type EggKind = "worker" | "attacker" | "defender" | "queen";
 
-export type GameMode = "title" | "playing" | "paused" | "over";
+export type Room = {
+  type: RoomType;
+  level: number;
+  cap: number;
+  stored: number;
+};
+
+export type Site = {
+  id: string;
+  kind: "home" | "meadow" | "bee" | "wasp" | "scorpion" | "berries";
+  x: number;
+  y: number;
+  r: number;
+  discovered: boolean;
+  cleared: boolean;
+  eggs: number;
+  pop: number;
+};
+
+export type SilkLink = { a: number; b: number };
+
+export type DifficultyTune = {
+  id: Difficulty;
+  label: string;
+  blurb: string;
+  food: number;
+  material: number;
+  nestHp: number;
+  queenHp: number;
+  enemyHp: number;
+  enemySpd: number;
+  hatch: number;
+  upkeepMul: number;
+  broodCap: number;
+};
+
+export const DIFFICULTIES: Record<Difficulty, DifficultyTune> = {
+  easy: {
+    id: "easy",
+    label: "Easy",
+    blurb: "Fat larders, sleepy hives, cheap silk.",
+    food: 80,
+    material: 40,
+    nestHp: 640,
+    queenHp: 360,
+    enemyHp: 0.78,
+    enemySpd: 0.86,
+    hatch: 6,
+    upkeepMul: 0.7,
+    broodCap: 10,
+  },
+  standard: {
+    id: "standard",
+    label: "Standard",
+    blurb: "The hollow as an empire, not a raid.",
+    food: 54,
+    material: 24,
+    nestHp: 480,
+    queenHp: 280,
+    enemyHp: 1,
+    enemySpd: 1,
+    hatch: 8,
+    upkeepMul: 1,
+    broodCap: 8,
+  },
+  difficult: {
+    id: "difficult",
+    label: "Difficult",
+    blurb: "Thin stores. Far hives wake hungry.",
+    food: 32,
+    material: 14,
+    nestHp: 380,
+    queenHp: 220,
+    enemyHp: 1.28,
+    enemySpd: 1.1,
+    hatch: 10,
+    upkeepMul: 1.2,
+    broodCap: 7,
+  },
+};
 
 export type Ent = {
   id: number;
@@ -60,12 +169,34 @@ export type Ent = {
   alive: boolean;
   anim: number;
   age: number;
-  role: HumanRole;
+  role: UnitRole;
   meat: number;
   ttl: number;
   poison: number;
   z: number;
   draw: number;
+  caste: Caste;
+  job: Job;
+  evo: Evo;
+  stage: Stage;
+  winged: boolean;
+  foodMeter: number;
+  foodMax: number;
+  homeX: number;
+  homeY: number;
+  site: string;
+  linked: boolean;
+  alert: boolean;
+  hibernating: boolean;
+  evoBite: number;
+  evoHp: number;
+  evoSpd: number;
+  splash: number;
+  chain: number;
+  roll: number;
+  sniper: number;
+  transCap: number;
+  haul: number;
 };
 
 export type Particle = {
@@ -93,30 +224,51 @@ export type UpgradeId = "fang" | "carapace" | "silk" | "brood";
 
 export type HudSnap = {
   mode: GameMode;
+  view: ViewMode;
+  difficulty: Difficulty;
   queenHp: number;
   queenMax: number;
   nestHp: number;
   nestMax: number;
-  meat: number;
-  wave: number;
+  food: number;
+  foodCap: number;
+  material: number;
+  matCap: number;
+  upkeep: number;
+  hibernating: number;
+  workers: number;
+  attackers: number;
+  defenders: number;
+  air: number;
+  teens: number;
   brood: number;
   broodMax: number;
   carrying: boolean;
   webCd: number;
   venomCd: number;
-  eggCost: number;
-  waveClear: number;
+  workerCost: number;
+  attackCost: number;
+  defendCost: number;
+  queenCost: number;
+  towerCost: number;
   ticker: string;
-  fang: number;
-  carapace: number;
-  silk: number;
-  broodLv: number;
-  costs: Record<UpgradeId, number>;
-  killsHuman: number;
-  killsScorpion: number;
-  scorpionOnHuman: number;
-  bestWave: number;
+  selected: string;
+  room: RoomType | "";
+  rooms: Room[];
+  evoOptions: { id: string; label: string; costF: number; costM: number }[];
+  succession: { id: number; label: string }[];
+  discovered: string[];
+  fogReady: boolean;
+  bestReach: number;
+  bestByDiff: Record<Difficulty, number>;
   overReason: string;
+  nestNear: boolean;
+  canLink: boolean;
+  silkHint: string;
+  silkNodes: number;
+  silkDist: number;
+  silkMax: number;
+  silkCost: number;
 };
 
 export type ControlsProbe = {
@@ -128,8 +280,29 @@ export type ControlsProbe = {
   setSteer: (v: number) => void;
 };
 
+export type SilkProbe = {
+  query: () => {
+    ready: boolean;
+    standOk: boolean;
+    reachOk: boolean;
+    dist: number;
+    hint: string;
+    links: number;
+    mute: number;
+    nodes: number;
+    material: number;
+    mode: GameMode;
+  };
+  raise: () => number;
+  layWorker: () => boolean;
+  splice: () => "spliced" | "blocked" | "none";
+  teleportQueen: (x: number, y: number) => void;
+  setStores: (food: number, material: number) => void;
+};
+
 declare global {
   interface Window {
     __controlsTest?: ControlsProbe;
+    __silkTest?: SilkProbe;
   }
 }

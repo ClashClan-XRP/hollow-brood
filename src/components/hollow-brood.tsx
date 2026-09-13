@@ -1,54 +1,69 @@
-import { useEffect, useRef, useState, type HTMLAttributes, type PointerEvent, type ReactNode } from "react";
-import { Bug, Crosshair, Egg, Pause, Play, Swords, Webhook } from "lucide-react";
+import { useEffect, useRef, useState, type HTMLAttributes, type PointerEvent, type ReactNode, type RefObject } from "react";
+import { Crown, Crosshair, Flag, Hammer, Home, Landmark, Pause, Play, Shield, Swords, Webhook } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { GameAudio } from "@/game/audio";
 import { loadAssets, type SpriteBook } from "@/game/assets";
 import { Input } from "@/game/input";
-import { render } from "@/game/render";
+import { render, renderMinimap, screenToWorld, viewWorldSize } from "@/game/render";
 import { Sim } from "@/game/sim";
-import { FIXED_DT, type HudSnap, type UpgradeId } from "@/game/types";
+import { DIFFICULTIES, FIXED_DT, WORLD_H, WORLD_W, type Difficulty, type Evo, type HudSnap, type RoomType } from "@/game/types";
 import { cn } from "@/lib/utils";
-
-const UPGRADE_META: { id: UpgradeId; label: string; blurb: string }[] = [
-  { id: "fang", label: "Fang", blurb: "Bite and venom" },
-  { id: "carapace", label: "Carapace", blurb: "Matriarch health" },
-  { id: "silk", label: "Silk", blurb: "Webs last longer" },
-  { id: "brood", label: "Brood", blurb: "More spiderlings" },
-];
 
 function emptyHud(): HudSnap {
   return {
     mode: "title",
-    queenHp: 260,
-    queenMax: 260,
-    nestHp: 420,
-    nestMax: 420,
-    meat: 18,
-    wave: 1,
+    view: "world",
+    difficulty: "standard",
+    queenHp: 280,
+    queenMax: 280,
+    nestHp: 480,
+    nestMax: 480,
+    food: 54,
+    foodCap: 80,
+    material: 24,
+    matCap: 40,
+    upkeep: 1,
+    hibernating: 0,
+    workers: 0,
+    attackers: 0,
+    defenders: 0,
+    air: 0,
+    teens: 0,
     brood: 0,
-    broodMax: 3,
+    broodMax: 8,
     carrying: false,
     webCd: 0,
     venomCd: 0,
-    eggCost: 12,
-    waveClear: 0,
+    workerCost: 6,
+    attackCost: 10,
+    defendCost: 10,
+    queenCost: 40,
+    towerCost: 18,
     ticker: "",
-    fang: 0,
-    carapace: 0,
-    silk: 0,
-    broodLv: 0,
-    costs: { fang: 16, carapace: 16, silk: 14, brood: 22 },
-    killsHuman: 0,
-    killsScorpion: 0,
-    scorpionOnHuman: 0,
-    bestWave: 0,
+    selected: "",
+    room: "hatchery",
+    rooms: [],
+    evoOptions: [],
+    succession: [],
+    discovered: [],
+    fogReady: false,
+    bestReach: 0,
+    bestByDiff: { easy: 0, standard: 0, difficult: 0 },
     overReason: "",
+    nestNear: false,
+    canLink: false,
+    silkHint: "",
+    silkNodes: 1,
+    silkDist: 0,
+    silkMax: 420,
+    silkCost: 2,
   };
 }
 
 export function HollowBrood() {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const miniRef = useRef<HTMLCanvasElement>(null);
   const simRef = useRef(new Sim());
   const inputRef = useRef(new Input());
   const audioRef = useRef(new GameAudio());
@@ -56,8 +71,11 @@ export function HollowBrood() {
   const [ready, setReady] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [hud, setHud] = useState<HudSnap>(emptyHud);
-  const [shop, setShop] = useState(false);
   const hudTimer = useRef(0);
+
+  useEffect(() => {
+    setHud(simRef.current.hud());
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -96,6 +114,15 @@ export function HollowBrood() {
       canvas.style.width = `${w}px`;
       canvas.style.height = `${h}px`;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const mini = miniRef.current;
+      if (mini) {
+        const mw = 220;
+        const mh = 134;
+        mini.width = Math.floor(mw * dpr);
+        mini.height = Math.floor(mh * dpr);
+        mini.style.width = `${mw}px`;
+        mini.style.height = `${mh}px`;
+      }
     };
     resize();
     const ro = new ResizeObserver(resize);
@@ -107,7 +134,7 @@ export function HollowBrood() {
       getX: () => sim.queen()?.x ?? 0,
       getY: () => sim.queen()?.y ?? 0,
       setKeys: (codes: string[]) => {
-        if (sim.mode === "title") begin();
+        if (sim.mode === "title") begin("standard");
         input.setKeys(codes);
       },
       setSteer: (v: number) => {
@@ -115,6 +142,44 @@ export function HollowBrood() {
       },
     };
     window.__controlsTest = probe;
+    window.__silkTest = {
+      query: () => {
+        const s = sim.silkQuery();
+        return {
+          ready: s.ready,
+          standOk: s.standOk,
+          reachOk: s.reachOk,
+          dist: s.dist,
+          hint: s.hint,
+          links: sim.links.length,
+          mute: sim.ents.filter((e) => e.alive && e.kind === "tower" && !e.linked).length,
+          nodes: sim.linkedNodes().length,
+          material: sim.material,
+          mode: sim.mode,
+        };
+      },
+      raise: () => {
+        sim.tryBuildTower();
+        return sim.ents.filter((e) => e.alive && e.kind === "tower").length;
+      },
+      layWorker: () => {
+        sim.tryLay("worker");
+        return true;
+      },
+      splice: () => sim.tryLink(),
+      teleportQueen: (x: number, y: number) => {
+        const q = sim.queen();
+        if (!q) return;
+        q.x = x;
+        q.y = y;
+        sim.camX = x;
+        sim.camY = y;
+      },
+      setStores: (food: number, material: number) => {
+        sim.food = food;
+        sim.material = material;
+      },
+    };
 
     let last = performance.now();
     let acc = 0;
@@ -134,7 +199,13 @@ export function HollowBrood() {
       }
       const cssW = wrap.clientWidth;
       const cssH = wrap.clientHeight;
+      const vis = viewWorldSize(cssW, cssH);
+      sim.setView(vis.w, vis.h);
       const aim = screenToWorld(actions.pointerX, actions.pointerY, sim.camX, sim.camY, cssW, cssH);
+      if (actions.justAttack) {
+        if (sim.view === "nest") sim.clickNest(actions.pointerX / cssW, actions.pointerY / cssH);
+        else sim.clickWorld(aim.x, aim.y);
+      }
       while (acc >= FIXED_DT) {
         if (sim.mode === "playing") {
           sim.step(FIXED_DT, actions, { x: aim.x, y: aim.y, has: actions.hasAim });
@@ -143,6 +214,13 @@ export function HollowBrood() {
       }
       const sprites = spritesRef.current;
       if (sprites) render(ctx, sim, sprites, cssW, cssH);
+      const mini = miniRef.current;
+      const mctx = mini?.getContext("2d");
+      if (mini && mctx && sim.mode !== "title") {
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
+        mctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        renderMinimap(mctx, sim, 220, 134);
+      }
       hudTimer.current += dt;
       if (hudTimer.current > 0.12) {
         hudTimer.current = 0;
@@ -156,13 +234,13 @@ export function HollowBrood() {
       ro.disconnect();
       input.detach();
       delete window.__controlsTest;
+      delete window.__silkTest;
     };
   }, [ready]);
 
-  function begin() {
+  function begin(difficulty: Difficulty) {
     audioRef.current.unlock();
-    simRef.current.reset();
-    setShop(false);
+    simRef.current.reset(difficulty);
     setHud(simRef.current.hud());
   }
 
@@ -170,10 +248,18 @@ export function HollowBrood() {
     inputRef.current.holdButton(name, down);
   }
 
+  function onMini(e: PointerEvent<HTMLCanvasElement>) {
+    const r = e.currentTarget.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * WORLD_W;
+    const y = ((e.clientY - r.top) / r.height) * WORLD_H;
+    simRef.current.glance(x, y);
+  }
+
   const playing = hud.mode === "playing";
   const paused = hud.mode === "paused";
   const over = hud.mode === "over";
   const title = hud.mode === "title";
+  const succession = hud.mode === "succession";
 
   return (
     <div
@@ -189,44 +275,34 @@ export function HollowBrood() {
       )}
 
       {title && !loadError && (
-        <TitleOverlay best={hud.bestWave} onStart={begin} disabled={!ready} />
+        <TitleOverlay bestByDiff={hud.bestByDiff} onStart={begin} disabled={!ready} />
       )}
 
       {(playing || paused) && (
         <Hud
           hud={hud}
-          shop={shop}
-          onShop={() => setShop((s) => !s)}
-          onBuy={(id) => {
-            simRef.current.buy(id);
-            setHud(simRef.current.hud());
-          }}
+          miniRef={miniRef}
+          onMini={onMini}
           onPause={() => {
             simRef.current.mode = paused ? "playing" : "paused";
+            setHud(simRef.current.hud());
+          }}
+          onHold={hold}
+          onEvo={(id) => {
+            simRef.current.evolveSelected(id);
+            setHud(simRef.current.hud());
+          }}
+          onExpand={(room) => {
+            simRef.current.expandRoom(room);
             setHud(simRef.current.hud());
           }}
         />
       )}
 
-      {playing && (
-        <>
-          <p className="pointer-events-none absolute bottom-4 left-1/2 z-10 hidden -translate-x-1/2 rounded-full border border-border bg-surface/80 px-3 py-1 text-xs text-muted sm:block">
-            WASD move · click bite · V venom · Q web · E egg · Esc pause
-          </p>
-          <TouchPad
-            onHold={hold}
-            webCd={hud.webCd}
-            venomCd={hud.venomCd}
-            eggCost={hud.eggCost}
-            meat={hud.meat}
-          />
-        </>
-      )}
-
       {paused && (
         <Modal
           title="Paused"
-          body="The hollow waits. Scorpions still pick the nearest prey when you return — raiders included."
+          body="Silk is a chain, not a fence. Mute towers hear nothing until you stand on the post and splice to a live node. If the line back to the hollow breaks, everything downstream goes mute. Defenders hold linked ground; air answers a ringing tower."
           action="Resume"
           onAction={() => {
             simRef.current.mode = "playing";
@@ -235,172 +311,222 @@ export function HollowBrood() {
         />
       )}
 
+      {succession && (
+        <div data-ui className="absolute inset-0 z-30 grid place-items-center bg-bg/70 px-4">
+          <div className="w-full max-w-md rounded-2xl border border-border bg-surface p-6">
+            <h2 className="font-display text-2xl tracking-tight">Choose an heir</h2>
+            <p className="mt-3 text-sm leading-relaxed text-muted">
+              The Matriarch fell. An adolescent queen can mature and hold the empire.
+            </p>
+            <div className="mt-4 flex flex-col gap-2">
+              {hud.succession.map((s) => (
+                <Button
+                  key={s.id}
+                  onClick={() => {
+                    simRef.current.matureTeen(s.id);
+                    setHud(simRef.current.hud());
+                  }}
+                >
+                  {s.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {over && (
         <Modal
           title="The hollow falls"
-          body={`${hud.overReason} Wave ${hud.wave}. Scorpions stole ${hud.scorpionOnHuman} strikes from the raiders.`}
-          action="Spin again"
-          onAction={begin}
+          body={`${hud.overReason} Reach ${hud.bestReach}.`}
+          action="Return to modes"
+          onAction={() => {
+            simRef.current.mode = "title";
+            setHud(simRef.current.hud());
+          }}
         />
       )}
     </div>
   );
 }
 
-function screenToWorld(
-  px: number,
-  py: number,
-  camX: number,
-  camY: number,
-  viewW: number,
-  viewH: number,
-) {
-  return {
-    x: camX - viewW / 2 + px,
-    y: camY - viewH / 2 + py,
-  };
-}
-
 function TitleOverlay({
-  best,
+  bestByDiff,
   onStart,
   disabled,
 }: {
-  best: number;
-  onStart: () => void;
+  bestByDiff: Record<Difficulty, number>;
+  onStart: (d: Difficulty) => void;
   disabled?: boolean;
 }) {
   return (
-    <div className="absolute inset-0 z-10 flex flex-col bg-bg/80 px-5 py-8 sm:px-10">
-      <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center gap-8">
-        <header className="max-w-xl">
-          <p className="text-xs font-medium uppercase tracking-[0.22em] text-muted">A three-way war</p>
-          <h1 className="mt-3 font-display text-5xl leading-tight tracking-tight text-foreground sm:text-7xl">
+    <div data-ui className="absolute inset-0 z-10 flex flex-col bg-bg/80 px-4 py-4 sm:px-8 sm:py-6">
+      <div className="mx-auto flex h-full w-full max-w-5xl flex-col justify-center gap-4 sm:gap-6">
+        <header className="max-w-2xl">
+          <p className="text-xs font-medium uppercase tracking-[0.22em] text-muted">An empire in silk</p>
+          <h1 className="mt-2 font-display text-4xl leading-tight tracking-tight text-foreground sm:text-6xl">
             Hollow Brood
           </h1>
-          <p className="mt-4 max-w-md text-base leading-relaxed text-muted">
-            Command the Matriarch of a moonlit forest hollow. Wrap raiders in silk, feed the nest,
-            and grow a brood. Wild scorpions hunt{" "}
-            <span className="text-foreground">anyone</span> — villagers, spiderlings, and you —
-            never just the queen.
+          <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted sm:text-base">
+            Walk the queen into unknown woods. Lay workers, attackers, and defenders. Silk-link towers
+            before bees, wasps, and burrows wake. Expand the nest below, or the larder will starve the army.
           </p>
         </header>
-        <div className="grid gap-3 sm:grid-cols-3">
-          <Fact k="Move" v="WASD or left stick" />
-          <Fact k="Bite / venom" v="Click or Space · V" />
-          <Fact k="Silk & eggs" v="Q webs · E near nest" />
+        <div className="grid grid-cols-3 gap-3">
+          {(Object.keys(DIFFICULTIES) as Difficulty[]).map((id) => {
+            const d = DIFFICULTIES[id];
+            return (
+              <button
+                key={id}
+                type="button"
+                disabled={disabled}
+                onClick={() => onStart(id)}
+                className="rounded-xl border border-border bg-surface p-3 text-left transition-opacity duration-150 hover:bg-surface-elevated disabled:opacity-40 sm:p-4"
+              >
+                <p className="font-display text-lg tracking-tight sm:text-2xl">{d.label}</p>
+                <p className="mt-1 text-xs leading-snug text-muted sm:text-sm">{d.blurb}</p>
+                {bestByDiff[id] > 0 && (
+                  <p className="mt-2 text-xs tabular-nums text-accent">Reach {bestByDiff[id]}</p>
+                )}
+              </button>
+            );
+          })}
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <Button size="lg" onClick={onStart} disabled={disabled}>
-            {disabled ? "Spinning silk…" : "Enter the hollow"}
-          </Button>
-          {best > 0 && (
-            <p className="text-sm text-muted">
-              Best wave <span className="font-medium text-foreground tabular-nums">{best}</span>
+        <p className="text-xs text-muted">
+          WASD move · Q silk splice on a mute tower · B raise tower · E/R/F brood
+        </p>
+        <div className="grid grid-cols-3 gap-2">
+          <div className="rounded-xl border border-border bg-surface/80 px-3 py-2">
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted">Mute</p>
+            <p className="mt-1 text-xs leading-snug text-foreground">
+              A new tower is deaf. No fog, no alert, no perimeter until silk reaches it from the nest.
             </p>
-          )}
+          </div>
+          <div className="rounded-xl border border-border bg-surface/80 px-3 py-2">
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted">Stand & splice</p>
+            <p className="mt-1 text-xs leading-snug text-foreground">
+              Walk onto the post — not from range — then Q. The strand must reach a live node within 420 paces and costs 2 material.
+            </p>
+          </div>
+          <div className="rounded-xl border border-border bg-surface/80 px-3 py-2">
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted">Chain</p>
+            <p className="mt-1 text-xs leading-snug text-foreground">
+              Hop tower to tower. Break the line home and everything downstream goes mute. Princesses splice for free.
+            </p>
+          </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-function Fact({ k, v }: { k: string; v: string }) {
-  return (
-    <div className="rounded-xl border border-border bg-surface p-4">
-      <p className="text-xs font-medium uppercase tracking-wider text-muted">{k}</p>
-      <p className="mt-1 text-sm text-foreground">{v}</p>
     </div>
   );
 }
 
 function Hud({
   hud,
-  shop,
-  onShop,
-  onBuy,
+  miniRef,
+  onMini,
   onPause,
+  onHold,
+  onEvo,
+  onExpand,
 }: {
   hud: HudSnap;
-  shop: boolean;
-  onShop: () => void;
-  onBuy: (id: UpgradeId) => void;
+  miniRef: RefObject<HTMLCanvasElement | null>;
+  onMini: (e: PointerEvent<HTMLCanvasElement>) => void;
   onPause: () => void;
+  onHold: (name: string, down: boolean) => void;
+  onEvo: (id: Evo) => void;
+  onExpand: (room: RoomType) => void;
 }) {
   return (
-    <>
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 p-3 pt-[max(0.75rem,env(safe-area-inset-top))] sm:p-4">
+    <div data-ui className="pointer-events-none absolute inset-0 z-10">
+      <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-3 p-3 pt-[max(0.5rem,env(safe-area-inset-top))]">
         <div className="pointer-events-auto flex min-w-0 flex-col gap-2">
-          <div className="flex items-center gap-2 rounded-xl border border-border bg-surface/90 px-3 py-2">
-            <span className="text-xs uppercase tracking-wider text-muted">Wave</span>
-            <span className="font-display text-xl tabular-nums leading-none">{hud.wave}</span>
-            <span className="mx-1 h-4 w-px bg-border" />
-            <span className="text-xs text-muted">Meat</span>
-            <span className="text-sm font-medium tabular-nums">{hud.meat}</span>
-            <span className="mx-1 h-4 w-px bg-border" />
-            <Bug className="size-3.5 text-muted" />
-            <span className="text-sm tabular-nums">
-              {hud.brood}/{hud.broodMax}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border bg-surface/90 px-3 py-2">
+            <span className="text-xs uppercase tracking-wider text-muted">{DIFFICULTIES[hud.difficulty].label}</span>
+            <span className="h-3.5 w-px bg-border" />
+            <span className="text-xs text-muted">Food</span>
+            <span className="text-sm font-medium tabular-nums">
+              {hud.food}/{hud.foodCap}
             </span>
+            <span className="h-3.5 w-px bg-border" />
+            <span className="text-xs text-muted">Mat</span>
+            <span className="text-sm font-medium tabular-nums">
+              {hud.material}/{hud.matCap}
+            </span>
+            <span className="h-3.5 w-px bg-border" />
+            <span className="text-xs text-muted">Upkeep</span>
+            <span className="text-sm tabular-nums">{hud.upkeep}/s</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-3 rounded-lg border border-border bg-surface/90 px-3 py-1.5 text-xs tabular-nums text-muted">
+            <Hammer className="size-3" /> {hud.workers}
+            <Swords className="size-3" /> {hud.attackers}
+            <Shield className="size-3" /> {hud.defenders}
+            <span>Air {hud.air}</span>
+            <span>
+              Brood {hud.brood}/{hud.broodMax}
+            </span>
+            {hud.hibernating > 0 && <span className="text-danger">Sleep {hud.hibernating}</span>}
           </div>
           {hud.ticker && (
-            <p className="max-w-xs truncate rounded-lg bg-surface/80 px-3 py-1.5 text-xs text-accent">
-              {hud.ticker}
+            <p className="max-w-md truncate rounded-md bg-surface/80 px-2.5 py-1 text-xs text-accent">{hud.ticker}</p>
+          )}
+          {hud.silkHint && (
+            <p className="max-w-md rounded-md border border-border bg-surface/90 px-2.5 py-1 text-xs text-muted">
+              Silk · {hud.silkNodes} node{hud.silkNodes === 1 ? "" : "s"}
+              {hud.silkDist > 0 ? ` · ${hud.silkDist}/${hud.silkMax}` : ""} · {hud.silkHint}
             </p>
           )}
         </div>
-        <div className="pointer-events-auto flex flex-col items-end gap-2">
-          <Meter label="Matriarch" value={hud.queenHp} max={hud.queenMax} />
-          <Meter label="Nest" value={hud.nestHp} max={hud.nestMax} warn />
-          <div className="flex gap-2">
-            <Button size="sm" variant="secondary" onClick={onShop}>
-              Evolve
-            </Button>
-            <Button size="icon" variant="secondary" onClick={onPause} aria-label="Pause">
-              {hud.mode === "paused" ? <Play /> : <Pause />}
-            </Button>
+        <div className="pointer-events-auto flex items-start gap-3">
+          <div className="flex flex-col gap-2">
+            <Meter label="Matriarch" value={hud.queenHp} max={hud.queenMax} />
+            <Meter label="Nest" value={hud.nestHp} max={hud.nestMax} warn />
           </div>
+          <Button size="icon" variant="secondary" onClick={onPause} aria-label="Pause" className="size-11">
+            {hud.mode === "paused" ? <Play /> : <Pause />}
+          </Button>
         </div>
       </div>
 
-      {hud.waveClear > 0 && (
-        <p className="pointer-events-none absolute left-1/2 top-[28%] z-10 -translate-x-1/2 font-display text-3xl tracking-tight text-foreground">
-          Wave {hud.wave}
-        </p>
-      )}
+      <div className="pointer-events-auto absolute bottom-28 left-3 rounded-lg border border-border bg-surface/90 p-1">
+        <canvas
+          ref={miniRef}
+          className="block cursor-pointer rounded-md"
+          width={220}
+          height={134}
+          onPointerDown={onMini}
+          aria-label="Minimap"
+        />
+        <p className="px-1 py-0.5 text-xs uppercase tracking-wider text-muted">Map · fog of war</p>
+      </div>
 
-      {hud.carrying && (
-        <p className="pointer-events-none absolute bottom-28 left-1/2 z-10 -translate-x-1/2 rounded-full border border-border bg-surface px-3 py-1 text-xs text-muted">
-          Haul the cocoon to the nest
-        </p>
-      )}
-
-      {shop && (
-        <div className="absolute bottom-24 left-1/2 z-20 w-[min(92vw,28rem)] -translate-x-1/2 rounded-2xl border border-border bg-surface p-4 shadow-lg">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="font-display text-lg">Evolve</h2>
-            <Button size="sm" variant="ghost" onClick={onShop}>
-              Close
-            </Button>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            {UPGRADE_META.map((u) => (
-              <button
-                key={u.id}
-                type="button"
-                onClick={() => onBuy(u.id)}
-                disabled={hud.meat < hud.costs[u.id]}
-                className="rounded-xl border border-border bg-surface-elevated p-3 text-left disabled:opacity-40"
+      {hud.view === "nest" && (
+        <div className="pointer-events-auto absolute right-3 top-28 w-56 rounded-xl border border-border bg-surface p-3">
+          <p className="font-display text-lg tracking-tight">Below</p>
+          <p className="mt-1 text-xs text-muted">
+            {hud.room || "chamber"} · {hud.selected || "no brood selected"}
+          </p>
+          <Button size="sm" className="mt-2 w-full" variant="secondary" onClick={() => onExpand(hud.room || "food")}>
+            Expand room
+          </Button>
+          <div className="mt-3 flex flex-col gap-2">
+            {hud.evoOptions.map((o) => (
+              <Button
+                key={o.id}
+                size="sm"
+                variant="secondary"
+                disabled={hud.food < o.costF || hud.material < o.costM}
+                onClick={() => onEvo(o.id as Evo)}
               >
-                <p className="text-sm font-medium">{u.label}</p>
-                <p className="text-xs text-muted">{u.blurb}</p>
-                <p className="mt-2 text-xs tabular-nums text-accent">{hud.costs[u.id]} meat</p>
-              </button>
+                {o.label} · {o.costF}f {o.costM}m
+              </Button>
             ))}
           </div>
         </div>
       )}
-    </>
+
+      <CommandBar hud={hud} onHold={onHold} />
+    </div>
   );
 }
 
@@ -417,52 +543,101 @@ function Meter({
 }) {
   const p = max <= 0 ? 0 : Math.max(0, Math.min(1, value / max));
   return (
-    <div className="w-40 rounded-xl border border-border bg-surface/90 px-3 py-2">
-      <div className="flex justify-between text-[11px] uppercase tracking-wider text-muted">
+    <div className="w-36 rounded-lg border border-border bg-surface/90 px-2.5 py-1.5">
+      <div className="flex justify-between text-xs uppercase tracking-wider text-muted">
         <span>{label}</span>
         <span className="tabular-nums text-foreground">
           {Math.ceil(value)}/{max}
         </span>
       </div>
-      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-bg">
-        <div
-          className={cn("h-full rounded-full", warn ? "bg-danger" : "bg-accent")}
-          style={{ width: `${p * 100}%` }}
-        />
+      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-bg">
+        <div className={cn("h-full rounded-full", warn ? "bg-danger" : "bg-accent")} style={{ width: `${p * 100}%` }} />
       </div>
     </div>
   );
 }
 
-function TouchPad({
+function CommandBar({
+  hud,
   onHold,
-  webCd,
-  venomCd,
-  eggCost,
-  meat,
 }: {
+  hud: HudSnap;
   onHold: (name: string, down: boolean) => void;
-  webCd: number;
-  venomCd: number;
-  eggCost: number;
-  meat: number;
 }) {
   const press = (name: string) => ({
     onPointerDown: (e: PointerEvent) => {
+      e.stopPropagation();
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
       onHold(name, true);
     },
-    onPointerUp: () => onHold(name, false),
+    onPointerUp: (e: PointerEvent) => {
+      e.stopPropagation();
+      onHold(name, false);
+    },
     onPointerCancel: () => onHold(name, false),
   });
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex items-end justify-between p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:hidden">
-      <div className="pointer-events-none size-28 rounded-full border border-border/80 bg-surface/40" />
-      <div className="pointer-events-auto grid grid-cols-2 gap-2">
-        <RoundBtn label="Bite" icon={<Swords />} {...press("bite")} />
-        <RoundBtn label="Venom" icon={<Crosshair />} cool={venomCd} {...press("venom")} />
-        <RoundBtn label="Silk" icon={<Webhook />} cool={webCd} {...press("web")} />
-        <RoundBtn label="Egg" icon={<Egg />} disabled={meat < eggCost} {...press("egg")} />
+    <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-6 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+      <div className="pointer-events-none mb-1 size-24 shrink-0 rounded-full border-2 border-border/80 bg-surface/40" />
+
+      <div className="pointer-events-auto flex items-end gap-8">
+        <div className="flex flex-col gap-3">
+          <RoundBtn
+            label="Worker"
+            hotkey="E"
+            icon={<Hammer />}
+            disabled={hud.food < hud.workerCost || hud.brood >= hud.broodMax}
+            {...press("egg")}
+          />
+          <RoundBtn
+            label="Attack"
+            hotkey="R"
+            icon={<Swords />}
+            disabled={hud.food < hud.attackCost || hud.brood >= hud.broodMax}
+            {...press("attackEgg")}
+          />
+          <RoundBtn
+            label="Defend"
+            hotkey="F"
+            icon={<Shield />}
+            disabled={hud.food < hud.defendCost || hud.brood >= hud.broodMax}
+            {...press("defend")}
+          />
+        </div>
+
+        <div className="flex flex-col gap-3">
+          <RoundBtn
+            label="Heir"
+            hotkey="G"
+            icon={<Crown />}
+            disabled={hud.food < hud.queenCost || hud.brood >= hud.broodMax}
+            {...press("queenEgg")}
+          />
+          <RoundBtn
+            label="Tower"
+            hotkey="B"
+            icon={<Landmark />}
+            disabled={hud.material < hud.towerCost}
+            {...press("tower")}
+          />
+          <RoundBtn label="Nest" hotkey="N" icon={<Home />} disabled={!hud.nestNear && hud.view !== "nest"} {...press("nest")} />
+        </div>
+
+        <div className="flex flex-col items-end gap-3">
+          <div className="flex gap-3">
+            <RoundBtn label="Assign" hotkey="C" icon={<Flag />} {...press("follow")} />
+            <RoundBtn
+              label={hud.canLink ? "Splice" : "Silk"}
+              hotkey="Q"
+              icon={<Webhook />}
+              cool={hud.webCd}
+              ready={hud.canLink}
+              {...press("web")}
+            />
+            <RoundBtn label="Venom" hotkey="V" icon={<Crosshair />} cool={hud.venomCd} {...press("venom")} />
+          </div>
+          <RoundBtn label="Bite" hotkey="LMB" icon={<Swords />} large {...press("bite")} />
+        </div>
       </div>
     </div>
   );
@@ -471,26 +646,40 @@ function TouchPad({
 function RoundBtn({
   label,
   icon,
+  hotkey,
   cool = 0,
   disabled,
+  large,
+  ready,
   ...rest
 }: {
   label: string;
   icon: ReactNode;
+  hotkey?: string;
   cool?: number;
   disabled?: boolean;
+  large?: boolean;
+  ready?: boolean;
 } & HTMLAttributes<HTMLButtonElement>) {
   return (
     <button
       type="button"
       disabled={disabled}
       aria-label={label}
-      className="relative flex size-14 flex-col items-center justify-center rounded-full border border-border bg-surface text-foreground disabled:opacity-40"
+      className={cn(
+        "relative flex flex-col items-center justify-center rounded-2xl border bg-surface text-foreground disabled:opacity-40",
+        ready ? "border-accent" : "border-border",
+        large ? "size-16" : "size-12",
+      )}
       {...rest}
     >
       {icon}
+      <span className="mt-0.5 text-xs uppercase tracking-wide text-muted">{label}</span>
+      {hotkey && (
+        <span className="absolute -top-2 right-1 rounded bg-bg px-1 text-xs tabular-nums text-muted">{hotkey}</span>
+      )}
       {cool > 0 && (
-        <span className="absolute inset-0 grid place-items-center rounded-full bg-bg/60 text-xs tabular-nums">
+        <span className="absolute inset-0 grid place-items-center rounded-2xl bg-bg/60 text-xs tabular-nums">
           {cool.toFixed(1)}
         </span>
       )}
@@ -510,7 +699,7 @@ function Modal({
   onAction: () => void;
 }) {
   return (
-    <div className="absolute inset-0 z-30 grid place-items-center bg-bg/70 px-4">
+    <div data-ui className="absolute inset-0 z-30 grid place-items-center bg-bg/70 px-4">
       <div className="w-full max-w-md rounded-2xl border border-border bg-surface p-6">
         <h2 className="font-display text-2xl tracking-tight">{title}</h2>
         <p className="mt-3 text-sm leading-relaxed text-muted">{body}</p>

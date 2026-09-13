@@ -1,6 +1,7 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import { AuthProvider } from "@/lib/auth/provider";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
+import { publicUrl } from "@/lib/public-url";
 import appCss from "../styles.css?url";
 
 const APP_NAME = "Hollow Brood";
@@ -15,14 +16,14 @@ export const Route = createRootRoute({
       {
         name: "description",
         content:
-          "Command the spider Matriarch. Grow a silk army. Survive a three-way war — wild scorpions hunt raiders, the queen, and her brood.",
+          "Widescreen spider colony action. Pick a difficulty, lay fang and siege eggs, and hold the nest in a three-way war.",
       },
     ],
     links: [
-      { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },
+      { rel: "icon", type: "image/svg+xml", href: publicUrl("favicon.svg") },
       { rel: "stylesheet", href: appCss },
-      { rel: "manifest", href: "/__grok/manifest.webmanifest" },
-      { rel: "apple-touch-icon", href: "/__grok/icon-180.png" },
+      { rel: "manifest", href: publicUrl("__grok/manifest.webmanifest") },
+      { rel: "apple-touch-icon", href: publicUrl("__grok/icon-180.png") },
     ],
   }),
   component: () => (

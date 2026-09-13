@@ -5,13 +5,27 @@ export type Actions = {
   wrap: boolean;
   web: boolean;
   egg: boolean;
+  siege: boolean;
   venom: boolean;
   pause: boolean;
   justAttack: boolean;
   justWeb: boolean;
   justEgg: boolean;
+  justSiege: boolean;
   justVenom: boolean;
   justPause: boolean;
+  justNest: boolean;
+  justAttackEgg: boolean;
+  justDefend: boolean;
+  justQueenEgg: boolean;
+  justTower: boolean;
+  justFollow: boolean;
+  nest: boolean;
+  attackEgg: boolean;
+  defend: boolean;
+  queenEgg: boolean;
+  tower: boolean;
+  follow: boolean;
   pointerX: number;
   pointerY: number;
   hasAim: boolean;
@@ -24,13 +38,27 @@ const empty = (): Actions => ({
   wrap: false,
   web: false,
   egg: false,
+  siege: false,
   venom: false,
   pause: false,
   justAttack: false,
   justWeb: false,
   justEgg: false,
+  justSiege: false,
   justVenom: false,
   justPause: false,
+  justNest: false,
+  justAttackEgg: false,
+  justDefend: false,
+  justQueenEgg: false,
+  justTower: false,
+  justFollow: false,
+  nest: false,
+  attackEgg: false,
+  defend: false,
+  queenEgg: false,
+  tower: false,
+  follow: false,
   pointerX: 0,
   pointerY: 0,
   hasAim: false,
@@ -41,6 +69,11 @@ function radial(x: number, y: number, dz = 0.18) {
   if (m < dz) return { x: 0, y: 0 };
   const s = (m - dz) / (1 - dz) / m;
   return { x: x * s, y: y * s };
+}
+
+function fromUi(e: Event) {
+  const t = e.target;
+  return t instanceof Element && Boolean(t.closest("[data-ui]"));
 }
 
 export class Input {
@@ -70,21 +103,22 @@ export class Input {
     const onUp = (e: KeyboardEvent) => this.keys.delete(e.code);
     const clear = () => this.keys.clear();
     const onPtr = (e: PointerEvent) => {
+      if (fromUi(e)) return;
       const r = el.getBoundingClientRect();
       this.pointerX = e.clientX - r.left;
       this.pointerY = e.clientY - r.top;
       this.hasPointer = true;
-      if (e.pointerType === "mouse" && e.buttons & 1) this.buttons.add("mouse");
-      if (e.pointerType === "mouse" && e.buttons & 2) this.buttons.add("rmouse");
     };
     const onPtrDown = (e: PointerEvent) => {
+      if (fromUi(e)) return;
       const r = el.getBoundingClientRect();
       const x = e.clientX - r.left;
       const y = e.clientY - r.top;
       this.pointerX = x;
       this.pointerY = y;
       this.hasPointer = e.pointerType === "mouse";
-      if (e.pointerType === "touch" && x < r.width * 0.46) {
+      const leftStick = x < r.width * 0.34 && y > r.height * 0.32;
+      if (e.pointerType === "touch" && leftStick) {
         this.joy.active = true;
         this.joy.id = e.pointerId;
         this.joyOrigin.x = x;
@@ -160,8 +194,7 @@ export class Input {
     this.prev = this.actions;
     const a = empty();
     const src = this.injected ?? [...this.keys];
-    const has = (c: string) =>
-      this.injected ? this.injected.includes(c) : this.keys.has(c);
+    const has = (c: string) => (this.injected ? this.injected.includes(c) : this.keys.has(c));
 
     let mx = 0;
     let my = 0;
@@ -187,6 +220,7 @@ export class Input {
         if (p.buttons[1]?.pressed) a.wrap = true;
         if (p.buttons[2]?.pressed) a.web = true;
         if (p.buttons[3]?.pressed) a.egg = true;
+        if (p.buttons[4]?.pressed) a.siege = true;
         if (p.buttons[7]?.pressed) a.venom = true;
         if (p.buttons[9]?.pressed) a.pause = true;
       }
@@ -201,11 +235,18 @@ export class Input {
     a.moveY = my;
 
     a.attack = a.attack || has("Space") || this.buttons.has("mouse") || this.buttons.has("bite");
-    a.wrap = a.wrap || has("KeyF") || this.buttons.has("wrap");
+    a.wrap = a.wrap || this.buttons.has("wrap");
     a.web = a.web || has("KeyQ") || this.buttons.has("web");
     a.egg = a.egg || has("KeyE") || this.buttons.has("egg");
-    a.venom = a.venom || has("KeyV") || has("KeyR") || this.buttons.has("rmouse") || this.buttons.has("venom");
+    a.siege = a.siege || this.buttons.has("siege");
+    a.venom = a.venom || has("KeyV") || this.buttons.has("rmouse") || this.buttons.has("venom");
     a.pause = a.pause || has("Escape") || has("KeyP");
+    a.nest = has("KeyN") || this.buttons.has("nest");
+    a.attackEgg = has("KeyR") || this.buttons.has("attackEgg");
+    a.defend = has("KeyF") || this.buttons.has("defend");
+    a.queenEgg = has("KeyG") || this.buttons.has("queenEgg");
+    a.tower = has("KeyB") || this.buttons.has("tower");
+    a.follow = has("KeyC") || this.buttons.has("follow");
     a.pointerX = this.pointerX;
     a.pointerY = this.pointerY;
     a.hasAim = this.hasPointer && !this.joy.active;
@@ -213,8 +254,15 @@ export class Input {
     a.justAttack = a.attack && !this.prev.attack;
     a.justWeb = a.web && !this.prev.web;
     a.justEgg = a.egg && !this.prev.egg;
+    a.justSiege = a.siege && !this.prev.siege;
     a.justVenom = a.venom && !this.prev.venom;
     a.justPause = a.pause && !this.prev.pause;
+    a.justNest = a.nest && !this.prev.nest;
+    a.justAttackEgg = a.attackEgg && !this.prev.attackEgg;
+    a.justDefend = a.defend && !this.prev.defend;
+    a.justQueenEgg = a.queenEgg && !this.prev.queenEgg;
+    a.justTower = a.tower && !this.prev.tower;
+    a.justFollow = a.follow && !this.prev.follow;
     this.actions = a;
     void src;
     return a;

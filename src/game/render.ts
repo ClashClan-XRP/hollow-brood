@@ -1,13 +1,43 @@
 import type { SpriteBook } from "./assets";
 import type { Sim } from "./sim";
 import type { Ent } from "./types";
-import { WORLD_H, WORLD_W } from "./types";
+import { FOG_CELL, LANDSCAPE_H, LANDSCAPE_W, MIN_ZOOM, NEST_PERIM, SILK_LINK_RANGE, SILK_STAND, TOWER_PERIM, WORLD_H, WORLD_W } from "./types";
 
-function facingRow(angle: number): number {
+/** Fill the screen with a 16:9 widescreen follow-cam. No letterbox. */
+export function cameraZoom(cssW: number, cssH: number) {
+  const cover = Math.max(cssW / LANDSCAPE_W, cssH / LANDSCAPE_H);
+  return Math.max(MIN_ZOOM, cover);
+}
+
+export function viewWorldSize(cssW: number, cssH: number) {
+  const z = cameraZoom(cssW, cssH);
+  return { z, w: cssW / z, h: cssH / z };
+}
+
+export function screenToWorld(
+  px: number,
+  py: number,
+  camX: number,
+  camY: number,
+  viewW: number,
+  viewH: number,
+) {
+  const { z, w, h } = viewWorldSize(viewW, viewH);
+  return {
+    x: camX - w / 2 + px / z,
+    y: camY - h / 2 + py / z,
+  };
+}
+
+/** Original-style 4-dir sheets: left is a horizontal mirror of the right row. */
+function facingDraw(angle: number): { row: number; flip: boolean } {
   const tau = Math.PI * 2;
   const a = ((angle % tau) + tau) % tau;
   const sector = Math.round(a / (Math.PI / 2)) % 4;
-  return [2, 0, 1, 3][sector] ?? 0;
+  if (sector === 0) return { row: 2, flip: false };
+  if (sector === 1) return { row: 0, flip: false };
+  if (sector === 2) return { row: 2, flip: true };
+  return { row: 3, flip: false };
 }
 
 function drawCell(
@@ -21,6 +51,7 @@ function drawCell(
   y: number,
   size: number,
   flash = 0,
+  flip = false,
 ) {
   if (!img.complete || img.naturalWidth === 0) return;
   const cw = img.naturalWidth / cols;
@@ -29,7 +60,9 @@ function drawCell(
   const sy = row * ch;
   ctx.save();
   if (flash > 0) ctx.globalCompositeOperation = "lighter";
-  ctx.drawImage(img, sx, sy, cw, ch, x - size / 2, y - size / 2, size, size);
+  ctx.translate(x, y);
+  if (flip) ctx.scale(-1, 1);
+  ctx.drawImage(img, sx, sy, cw, ch, -size / 2, -size / 2, size, size);
   ctx.restore();
 }
 
@@ -66,6 +99,30 @@ function walkFrame(anim: number, moving: boolean) {
   return Math.floor(anim * 8) % 4;
 }
 
+function walk2x2(angle: number): { row: number; flip: boolean } {
+  const tau = Math.PI * 2;
+  const a = ((angle % tau) + tau) % tau;
+  const sector = Math.round(a / (Math.PI / 2)) % 4;
+  if (sector === 0) return { row: 0, flip: false };
+  if (sector === 1) return { row: 1, flip: false };
+  if (sector === 2) return { row: 0, flip: true };
+  return { row: 1, flip: false };
+}
+
+function wings(ctx: CanvasRenderingContext2D, e: Ent) {
+  if (!e.winged) return;
+  ctx.save();
+  ctx.translate(e.x, e.y);
+  ctx.rotate(e.facing);
+  ctx.globalAlpha = 0.45;
+  ctx.fillStyle = "#e8ebe4";
+  ctx.beginPath();
+  ctx.ellipse(-6, -10, 12, 6, -0.4, 0, Math.PI * 2);
+  ctx.ellipse(-6, 10, 12, 6, 0.4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 export function render(
   ctx: CanvasRenderingContext2D,
   sim: Sim,
@@ -73,21 +130,123 @@ export function render(
   viewW: number,
   viewH: number,
 ) {
+  if (sim.view === "nest") {
+    renderNest(ctx, sim, sprites, viewW, viewH);
+    return;
+  }
+
+  const { z, w: visW, h: visH } = viewWorldSize(viewW, viewH);
   const shake = sim.trauma * sim.trauma;
-  const ox = (Math.random() * 2 - 1) * 14 * shake;
-  const oy = (Math.random() * 2 - 1) * 14 * shake;
-  const camX = sim.camX - viewW / 2 + ox;
-  const camY = sim.camY - viewH / 2 + oy;
+  const jx = (Math.random() * 2 - 1) * 10 * shake;
+  const jy = (Math.random() * 2 - 1) * 10 * shake;
+  const originX = sim.camX - visW / 2 + jx;
+  const originY = sim.camY - visH / 2 + jy;
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, viewW, viewH);
   ctx.fillStyle = "#0b100e";
   ctx.fillRect(0, 0, viewW, viewH);
 
+  ctx.setTransform(z, 0, 0, z, 0, 0);
   ctx.save();
-  ctx.translate(-camX, -camY);
+  ctx.translate(-originX, -originY);
 
-  ctx.drawImage(sprites.floor, 0, 0, WORLD_W, WORLD_H);
+  const fw = sprites.floor.naturalWidth || 1792;
+  const fh = sprites.floor.naturalHeight || 1008;
+  for (let y = 0; y < WORLD_H; y += fh) {
+    for (let x = 0; x < WORLD_W; x += fw) {
+      ctx.drawImage(sprites.floor, x, y, fw, fh);
+    }
+  }
+
+  ctx.strokeStyle = "rgba(232,235,228,0.18)";
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 10]);
+  const nest = sim.nest();
+  if (nest) {
+    ctx.beginPath();
+    ctx.arc(nest.x, nest.y, NEST_PERIM, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([3, 16]);
+    ctx.strokeStyle = "rgba(232,235,228,0.14)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(nest.x, nest.y, SILK_LINK_RANGE, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  for (const n of sim.linkedNodes()) {
+    if (nest && n.id === nest.id) continue;
+    ctx.setLineDash([3, 16]);
+    ctx.strokeStyle = "rgba(232,235,228,0.1)";
+    ctx.lineWidth = 1.25;
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, SILK_LINK_RANGE, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  function strand(ax: number, ay: number, bx: number, by: number, ready: boolean, live: boolean) {
+    const mx = (ax + bx) / 2;
+    const my = (ay + by) / 2 + Math.min(36, Math.hypot(bx - ax, by - ay) * 0.08);
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.quadraticCurveTo(mx, my, bx, by);
+    ctx.strokeStyle = ready ? "rgba(232,235,228,0.92)" : live ? "rgba(201,208,196,0.6)" : "rgba(196,92,76,0.5)";
+    ctx.lineWidth = ready ? 4 : live ? 3 : 2;
+    if (!live) ctx.setLineDash([8, 8]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (live || ready) {
+      const pulse = sim.reducedMotion ? 0.5 : 0.5 + 0.5 * Math.sin(sim.time * 3.2);
+      for (let i = 1; i <= 4; i++) {
+        const t = (i / 5 + (live ? sim.time * 0.08 : 0)) % 1;
+        const u = 1 - t;
+        const px = u * u * ax + 2 * u * t * mx + t * t * bx;
+        const py = u * u * ay + 2 * u * t * my + t * t * by;
+        ctx.fillStyle = ready ? `rgba(232,235,228,${0.35 + 0.5 * pulse})` : `rgba(201,208,196,${0.25 + 0.35 * pulse})`;
+        ctx.beginPath();
+        ctx.arc(px, py, ready ? 3.2 : 2.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  for (const link of sim.links) {
+    const a = sim.ents.find((e) => e.id === link.a && e.alive);
+    const b = sim.ents.find((e) => e.id === link.b && e.alive);
+    if (!a || !b) continue;
+    strand(a.x, a.y, b.x, b.y, false, true);
+  }
+  const preview = sim.silkPreview();
+  if (preview) {
+    const pulse = sim.reducedMotion ? 1 : 0.55 + 0.45 * Math.sin(sim.time * 4);
+    ctx.strokeStyle = preview.standOk ? `rgba(232,235,228,${0.4 + 0.4 * pulse})` : "rgba(196,92,76,0.75)";
+    ctx.lineWidth = preview.standOk ? 2.6 : 1.8;
+    ctx.setLineDash(preview.standOk ? [] : [5, 5]);
+    ctx.beginPath();
+    ctx.arc(preview.ax, preview.ay, SILK_STAND, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.strokeStyle = preview.reachOk ? "rgba(183,201,106,0.38)" : "rgba(196,92,76,0.42)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash(preview.reachOk ? [4, 10] : [8, 8]);
+    ctx.beginPath();
+    ctx.arc(preview.bx, preview.by, SILK_LINK_RANGE, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    strand(preview.ax, preview.ay, preview.bx, preview.by, preview.ready, false);
+
+    const mx = (preview.ax + preview.bx) / 2;
+    const my = (preview.ay + preview.by) / 2 + Math.min(36, Math.hypot(preview.bx - preview.ax, preview.by - preview.ay) * 0.08);
+    ctx.font = "600 12px Figtree, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillStyle = preview.ready ? "#e8ebe4" : preview.reachOk ? "#c9d0c4" : "#c45c4c";
+    ctx.fillText(`${Math.round(preview.dist)} / ${SILK_LINK_RANGE}`, mx, my - 12);
+  }
 
   const sorted = sim.ents.filter((e) => e.alive).sort((a, b) => a.y - b.y);
 
@@ -101,6 +260,8 @@ export function render(
 
   for (const e of sorted) {
     if (e.kind === "web" || e.kind === "shot" || e.kind === "fx") continue;
+    const dir = facingDraw(e.facing);
+    const attackFlip = Math.cos(e.facing) < 0;
     switch (e.kind) {
       case "burrow":
         drawProp(ctx, sprites.burrow, e.x, e.y, e.draw, e.draw);
@@ -113,8 +274,10 @@ export function render(
         drawProp(ctx, sprites.tree, e.x, e.y - 28, e.draw * 0.85, e.draw);
         break;
       case "egg":
+        if (e.role === "siege") ctx.filter = "hue-rotate(72deg) saturate(1.15)";
         drawProp(ctx, sprites.eggs, e.x, e.y, e.draw, e.draw);
-        hpBar(ctx, e, 18, "#e8ebe4");
+        ctx.filter = "none";
+        hpBar(ctx, e, 18, e.role === "siege" ? "#b7c96a" : "#e8ebe4");
         break;
       case "cocoon":
         drawProp(ctx, sprites.cocoon, e.x, e.y, e.draw, e.draw);
@@ -145,6 +308,7 @@ export function render(
             e.y,
             e.draw,
             e.flash,
+            attackFlip,
           );
         } else {
           drawCell(
@@ -152,12 +316,13 @@ export function render(
             sprites.queenWalk,
             4,
             4,
-            facingRow(e.facing),
+            dir.row,
             walkFrame(e.anim, moving),
             e.x,
             e.y,
             e.draw,
             e.flash,
+            dir.flip,
           );
         }
         hpBar(ctx, e, e.draw * 0.42, "#b7c96a");
@@ -165,18 +330,27 @@ export function render(
       }
       case "brood": {
         const moving = Math.hypot(e.vx, e.vy) > 12;
-        drawCell(
-          ctx,
-          sprites.spiderlingWalk,
-          4,
-          4,
-          facingRow(e.facing),
-          walkFrame(e.anim, moving),
-          e.x,
-          e.y,
-          e.draw,
-          e.flash,
-        );
+        const attacking = e.atkT > 0;
+        if (e.stage === "chrysalis") {
+          drawProp(ctx, sprites.cocoon, e.x, e.y, e.draw, e.draw);
+          break;
+        }
+        if (e.caste === "worker") ctx.filter = "sepia(0.45) saturate(0.85)";
+        else if (e.caste === "defender") ctx.filter = "hue-rotate(48deg) saturate(0.8)";
+        if (e.hibernating) ctx.globalAlpha = 0.45;
+        wings(ctx, e);
+        const sheet = e.evo === "tank" || e.evo === "siege" ? sprites.siegeWalk : sprites.spiderlingWalk;
+        const atk = e.evo === "tank" || e.evo === "siege" ? sprites.siegeAttack : sprites.packAttack;
+        if (attacking && e.dmg > 0) {
+          const f = Math.min(3, Math.floor((1 - e.atkT / 0.32) * 4));
+          drawCell(ctx, atk, 2, 2, Math.floor(f / 2), f % 2, e.x, e.y, e.draw + 6, e.flash, attackFlip);
+        } else if (e.evo === "tank" || e.evo === "siege") {
+          drawCell(ctx, sheet, 4, 4, dir.row, walkFrame(e.anim, moving), e.x, e.y, e.draw, e.flash, dir.flip);
+        } else {
+          drawCell(ctx, sheet, 4, 4, dir.row, walkFrame(e.anim, moving), e.x, e.y, e.draw, e.flash, dir.flip);
+        }
+        ctx.filter = "none";
+        ctx.globalAlpha = 1;
         hpBar(ctx, e, 16, "#b7c96a");
         break;
       }
@@ -186,19 +360,32 @@ export function render(
         if (e.role === "torch") ctx.filter = "sepia(0.35) saturate(1.4)";
         if (attacking) {
           const f = Math.min(3, Math.floor((1 - e.atkT / 0.38) * 4));
-          drawCell(ctx, sprites.humanAttack, 2, 2, Math.floor(f / 2), f % 2, e.x, e.y, e.draw, e.flash);
+          drawCell(
+            ctx,
+            sprites.humanAttack,
+            2,
+            2,
+            Math.floor(f / 2),
+            f % 2,
+            e.x,
+            e.y,
+            e.draw,
+            e.flash,
+            attackFlip,
+          );
         } else {
           drawCell(
             ctx,
             sprites.humanWalk,
             4,
             4,
-            facingRow(e.facing),
+            dir.row,
             walkFrame(e.anim, moving),
             e.x,
             e.y,
             e.draw,
             e.flash,
+            dir.flip,
           );
         }
         ctx.filter = "none";
@@ -221,6 +408,7 @@ export function render(
             e.y,
             e.draw,
             e.flash,
+            attackFlip,
           );
         } else {
           drawCell(
@@ -228,27 +416,85 @@ export function render(
             sprites.scorpionWalk,
             4,
             4,
-            facingRow(e.facing),
+            dir.row,
             walkFrame(e.anim, moving),
             e.x,
             e.y,
             e.draw,
             e.flash,
+            dir.flip,
           );
         }
-        const t = sim.ents.find((o) => o.id === e.targetId && o.alive);
-        if (t) {
+        const tgt = sim.ents.find((o) => o.id === e.targetId && o.alive);
+        if (tgt) {
           ctx.strokeStyle =
-            t.faction === "human" ? "rgba(196,92,76,0.45)" : "rgba(183,201,106,0.4)";
+            tgt.faction === "human" ? "rgba(196,92,76,0.45)" : "rgba(183,201,106,0.4)";
           ctx.lineWidth = 1.4;
           ctx.setLineDash([4, 5]);
           ctx.beginPath();
           ctx.moveTo(e.x, e.y);
-          ctx.lineTo(t.x, t.y);
+          ctx.lineTo(tgt.x, tgt.y);
           ctx.stroke();
           ctx.setLineDash([]);
         }
         hpBar(ctx, e, 24, "#c46a3a");
+        break;
+      }
+      case "bee": {
+        const d2 = walk2x2(e.facing);
+        const moving = Math.hypot(e.vx, e.vy) > 8;
+        const col = moving ? Math.floor(e.anim * 6) % 2 : 0;
+        drawCell(ctx, sprites.beeWalk, 2, 2, d2.row, col, e.x, e.y, e.draw, e.flash, d2.flip);
+        hpBar(ctx, e, 16, "#c9a227");
+        break;
+      }
+      case "wasp": {
+        const d2 = walk2x2(e.facing);
+        const moving = Math.hypot(e.vx, e.vy) > 8;
+        const col = moving ? Math.floor(e.anim * 6) % 2 : 0;
+        drawCell(ctx, sprites.waspWalk, 2, 2, d2.row, col, e.x, e.y, e.draw, e.flash, d2.flip);
+        hpBar(ctx, e, 16, "#c46a3a");
+        break;
+      }
+      case "herbivore": {
+        const d2 = walk2x2(e.facing);
+        const moving = Math.hypot(e.vx, e.vy) > 6;
+        const col = moving ? Math.floor(e.anim * 5) % 2 : 0;
+        drawCell(ctx, sprites.stagWalk, 2, 2, d2.row, col, e.x, e.y, e.draw, e.flash, d2.flip);
+        hpBar(ctx, e, 20, "#8a9388");
+        break;
+      }
+      case "tower":
+        drawProp(ctx, sprites.tower, e.x, e.y - 10, e.draw * 0.7, e.draw);
+        ctx.save();
+        ctx.setLineDash(e.linked ? [] : [5, 6]);
+        ctx.strokeStyle = e.linked
+          ? e.alert
+            ? "rgba(183,201,106,0.55)"
+            : "rgba(232,235,228,0.22)"
+          : "rgba(196,92,76,0.7)";
+        ctx.lineWidth = e.alert ? 2.5 : 1.5;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, e.linked ? TOWER_PERIM : SILK_STAND, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+        hpBar(ctx, e, 28, e.linked ? "#b7c96a" : "#c45c4c");
+        ctx.font = "600 11px Figtree, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillStyle = e.linked ? "#c9d0c4" : "#c45c4c";
+        ctx.fillText(e.linked ? (e.alert ? "ALERT" : "NET") : "MUTE", e.x, e.y + 36);
+        break;
+      case "hive":
+        drawProp(ctx, sprites.nest, e.x, e.y, e.draw * 0.7, e.draw * 0.7);
+        ctx.filter = e.faction === "bee" ? "sepia(0.8) saturate(1.6)" : "hue-rotate(-20deg) saturate(1.3)";
+        ctx.filter = "none";
+        hpBar(ctx, e, 28, "#c9a227");
+        break;
+      case "node": {
+        ctx.fillStyle = "rgba(183,201,106,0.55)";
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, 11, 0, Math.PI * 2);
+        ctx.fill();
         break;
       }
       default:
@@ -259,10 +505,11 @@ export function render(
   for (const e of sorted) {
     if (e.kind !== "shot") continue;
     const f = Math.floor(e.anim * 8) % 4;
+    const img = e.role === "siege" ? sprites.siegeShot : sprites.venom;
     ctx.save();
     ctx.translate(e.x, e.y);
     ctx.rotate(e.facing);
-    drawCell(ctx, sprites.venom, 2, 2, Math.floor(f / 2), f % 2, 0, 0, e.draw);
+    drawCell(ctx, img, 2, 2, Math.floor(f / 2), f % 2, 0, 0, e.draw);
     ctx.restore();
   }
 
@@ -290,5 +537,139 @@ export function render(
     ctx.globalAlpha = 1;
   }
 
+  const fog = sim.fog;
+  const x0 = Math.max(0, Math.floor(originX / FOG_CELL) - 1);
+  const y0 = Math.max(0, Math.floor(originY / FOG_CELL) - 1);
+  const x1 = Math.min(fog.cols, Math.ceil((originX + visW) / FOG_CELL) + 1);
+  const y1 = Math.min(fog.rows, Math.ceil((originY + visH) / FOG_CELL) + 1);
+  for (let cy = y0; cy < y1; cy++) {
+    for (let cx = x0; cx < x1; cx++) {
+      const i = cy * fog.cols + cx;
+      const vis = fog.visible[i];
+      const exp = fog.explored[i];
+      if (vis) continue;
+      ctx.fillStyle = exp ? "rgba(6,10,8,0.58)" : "#050807";
+      ctx.fillRect(cx * FOG_CELL, cy * FOG_CELL, FOG_CELL + 1, FOG_CELL + 1);
+    }
+  }
+
   ctx.restore();
+}
+
+function renderNest(
+  ctx: CanvasRenderingContext2D,
+  sim: Sim,
+  sprites: SpriteBook,
+  viewW: number,
+  viewH: number,
+) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = "#0b100e";
+  ctx.fillRect(0, 0, viewW, viewH);
+  const img = sprites.nestInside;
+  if (img.complete && img.naturalWidth) {
+    const s = Math.max(viewW / img.naturalWidth, viewH / img.naturalHeight);
+    const w = img.naturalWidth * s;
+    const h = img.naturalHeight * s;
+    ctx.drawImage(img, (viewW - w) / 2, (viewH - h) / 2, w, h);
+  }
+  const rooms: { type: string; x: number; y: number; label: string }[] = [
+    { type: "material", x: 0.28, y: 0.3, label: "Material" },
+    { type: "chrysalis", x: 0.72, y: 0.28, label: "Chrysalis" },
+    { type: "chamber", x: 0.5, y: 0.5, label: "Queen" },
+    { type: "hatchery", x: 0.3, y: 0.72, label: "Hatchery" },
+    { type: "food", x: 0.72, y: 0.7, label: "Food" },
+  ];
+  ctx.font = "600 14px Figtree, sans-serif";
+  ctx.textAlign = "center";
+  for (const r of rooms) {
+    const x = r.x * viewW;
+    const y = r.y * viewH;
+    const on = sim.selectedRoom === r.type;
+    ctx.fillStyle = on ? "rgba(183,201,106,0.28)" : "rgba(11,16,14,0.35)";
+    ctx.beginPath();
+    ctx.ellipse(x, y, 70, 46, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#e8ebe4";
+    ctx.fillText(r.label, x, y - 36);
+    const room = sim.rooms.find((o) => o.type === r.type);
+    if (room) {
+      ctx.fillStyle = "#8a9388";
+      ctx.fillText(`Lv ${room.level} · ${Math.floor(room.stored)}/${room.cap}`, x, y + 48);
+    }
+  }
+  const brood = sim.ents.filter((e) => e.alive && e.faction === "spider" && (e.kind === "brood" || e.kind === "queen" || e.kind === "egg"));
+  brood.forEach((e, i) => {
+    const slot = rooms[i % rooms.length];
+    const x = slot.x * viewW + Math.cos(i) * 28;
+    const y = slot.y * viewH + Math.sin(i * 1.3) * 18;
+    const dir = facingDraw(e.facing);
+    if (e.kind === "queen") {
+      drawCell(ctx, sprites.queenWalk, 4, 4, dir.row, 0, x, y, e.stage === "adolescent" ? 48 : 64, 0, dir.flip);
+    } else if (e.kind === "egg") {
+      drawProp(ctx, sprites.eggs, x, y, 28, 28);
+    } else if (e.stage === "chrysalis") {
+      drawProp(ctx, sprites.cocoon, x, y, 32, 32);
+    } else {
+      drawCell(ctx, sprites.spiderlingWalk, 4, 4, dir.row, 0, x, y, 28, 0, dir.flip);
+    }
+  });
+}
+
+export function renderMinimap(
+  ctx: CanvasRenderingContext2D,
+  sim: Sim,
+  w: number,
+  h: number,
+) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = "#050807";
+  ctx.fillRect(0, 0, w, h);
+  const sx = w / WORLD_W;
+  const sy = h / WORLD_H;
+  const fog = sim.fog;
+  const step = 2;
+  for (let cy = 0; cy < fog.rows; cy += step) {
+    for (let cx = 0; cx < fog.cols; cx += step) {
+      const i = cy * fog.cols + cx;
+      if (!fog.explored[i]) continue;
+      ctx.fillStyle = fog.visible[i] ? "#1c2620" : "#101814";
+      ctx.fillRect(cx * FOG_CELL * sx, cy * FOG_CELL * sy, FOG_CELL * sx * step + 1, FOG_CELL * sy * step + 1);
+    }
+  }
+  ctx.strokeStyle = "rgba(201,208,196,0.55)";
+  ctx.lineWidth = 1;
+  for (const link of sim.links) {
+    const a = sim.ents.find((e) => e.id === link.a && e.alive);
+    const b = sim.ents.find((e) => e.id === link.b && e.alive);
+    if (!a || !b) continue;
+    ctx.beginPath();
+    ctx.moveTo(a.x * sx, a.y * sy);
+    ctx.lineTo(b.x * sx, b.y * sy);
+    ctx.stroke();
+  }
+  for (const e of sim.ents) {
+    if (!e.alive) continue;
+    if (!sim.fog.seen(e.x, e.y) && e.faction !== "spider") continue;
+    if (e.kind === "shot" || e.kind === "web" || e.kind === "fx") continue;
+    ctx.fillStyle =
+      e.kind === "queen"
+        ? "#e8ebe4"
+        : e.faction === "spider"
+          ? "#b7c96a"
+          : e.kind === "herbivore"
+            ? "#8a9388"
+            : e.kind === "bee"
+              ? "#c9a227"
+              : e.kind === "tower"
+                ? e.linked
+                  ? "#c9d0c4"
+                  : "#c45c4c"
+                : "#c45c4c";
+    const s = e.kind === "queen" || e.kind === "nest" ? 3.5 : 2;
+    ctx.fillRect(e.x * sx - s / 2, e.y * sy - s / 2, s, s);
+  }
+  ctx.strokeStyle = "#e8ebe4";
+  ctx.lineWidth = 1;
+  ctx.strokeRect((sim.camX - sim.viewW / 2) * sx, (sim.camY - sim.viewH / 2) * sy, sim.viewW * sx, sim.viewH * sy);
 }

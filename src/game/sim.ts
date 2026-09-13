@@ -35,6 +35,7 @@ import {
 import type { Actions } from "./input";
 import type { GameAudio } from "./audio";
 import { Fog } from "./fog";
+import { Nav, type Route } from "./path";
 
 const SAVE_KEY = "hollow-brood-v3";
 function clamp(v: number, a: number, b: number) {
@@ -112,6 +113,8 @@ export class Sim {
 	links: SilkLink[] = [];
 	teenSilkNote = 0;
 	fog = new Fog();
+	nav = new Nav();
+	routes = new Map<number, Route>();
 	nextId = 1;
 	mode: GameMode = "title";
 	view: ViewMode = "world";
@@ -247,6 +250,8 @@ export class Sim {
 		this.looking = 0;
 		this.marking = false;
 		this.fog.reset();
+		this.nav.clear();
+		this.routes.clear();
 		const save = loadSave();
 		this.bestReach = save.bestReach;
 		this.bestByDiff = save.bestByDiff;
@@ -405,6 +410,7 @@ export class Sim {
 		this.seedHive("scorpion");
 		for (const [x, y] of [
 			[760, 900],
+			[1180, 1080],
 			[1400, 980],
 			[980, 1480],
 			[1680, 1320],
@@ -431,6 +437,7 @@ export class Sim {
 		this.camX = queen.x;
 		this.camY = queen.y;
 		this.fog.reveal(NEST_POS.x, NEST_POS.y, 380);
+		this.bakeNav();
 		this.clampCamera();
 		this.mode = "playing";
 		this.note("Explore. Lay workers. Silk-link a tower before the hives wake.");
@@ -859,14 +866,82 @@ export class Sim {
 	seek(e: Ent, target: { x: number; y: number }, dt: number) {
 		const a = ang(e, target);
 		e.facing = a;
+		let spd = this.moveSpeed(e);
+		e.vx = Math.cos(a) * spd;
+		e.vy = Math.sin(a) * spd;
+		void dt;
+	}
+	moveSpeed(e: Ent) {
 		let spd = e.speed;
 		if (e.winged) spd *= 1.35;
 		if (e.evo === "siege") spd *= .72;
 		if (e.evo === "tank") spd *= .78;
 		if (e.foodMeter < 12 && e.caste === "worker") spd *= .55;
 		if (e.hibernating) spd *= 1.1;
-		e.vx = Math.cos(a) * spd;
-		e.vy = Math.sin(a) * spd;
+		return spd;
+	}
+	bakeNav() {
+		this.nav.clear();
+		for (const e of this.ents) {
+			if (!e.alive) continue;
+			if (e.kind === "tree") this.nav.stampCircle(e.x, e.y, Math.max(34, e.r + 16));
+			else if (e.kind === "burrow" || e.kind === "hive") this.nav.stampCircle(e.x, e.y, e.r + 14);
+			else if (e.kind === "tower") this.nav.stampCircle(e.x, e.y, e.r + 10);
+		}
+		this.nav.dirty = false;
+		this.routes.clear();
+	}
+	routeTo(e: Ent, x: number, y: number, dt: number) {
+		if (e.winged) {
+			this.seek(e, { x, y }, dt);
+			this.routes.delete(e.id);
+			return;
+		}
+		if (this.nav.dirty) this.bakeNav();
+		let route = this.routes.get(e.id);
+		const far = !route || Math.hypot(route.gx - x, route.gy - y) > 28;
+		const stale = !route || this.time - route.at > 1.1;
+		const empty = !route || route.i >= route.pts.length;
+		if (far || stale || empty || !route) {
+			const pts = this.nav.path(e.x, e.y, x, y);
+			route = { pts, i: 0, gx: x, gy: y, at: this.time };
+			this.routes.set(e.id, route);
+		}
+		this.followRoute(e, route, dt);
+	}
+	followRoute(e: Ent, route: Route, dt: number) {
+		const pts = route.pts;
+		if (!pts.length) {
+			this.seek(e, { x: route.gx, y: route.gy }, dt);
+			return;
+		}
+		while (route.i < pts.length - 1 && Math.hypot(e.x - pts[route.i].x, e.y - pts[route.i].y) < 20) route.i++;
+		while (
+			route.i < pts.length - 1 &&
+			this.nav.los(e.x, e.y, pts[route.i + 1].x, pts[route.i + 1].y)
+		) {
+			route.i++;
+		}
+		const t = pts[Math.min(route.i, pts.length - 1)];
+		const last = route.i >= pts.length - 1;
+		const d = Math.hypot(t.x - e.x, t.y - e.y) || 1;
+		let spd = this.moveSpeed(e);
+		if (last && d < 52) spd *= Math.max(0.22, d / 52);
+		let fx = (t.x - e.x) / d;
+		let fy = (t.y - e.y) / d;
+		const shove = this.nav.avoid(e.x, e.y, fx, fy);
+		fx += shove.x * 0.7;
+		fy += shove.y * 0.7;
+		const mag = Math.hypot(fx, fy) || 1;
+		fx /= mag;
+		fy /= mag;
+		e.facing = Math.atan2(fy, fx);
+		e.vx = fx * spd;
+		e.vy = fy * spd;
+		void dt;
+	}
+	workerPath(id: number) {
+		return this.routes.get(id);
 	}
 	hold(e: Ent, dt: number) {
 		e.vx *= Math.pow(.02, dt);
@@ -998,6 +1073,9 @@ export class Sim {
 		for (const tk of this.tickers) tk.life -= dt;
 		this.tickers = this.tickers.filter((tk) => tk.life > 0);
 		this.ents = this.ents.filter((e) => e.alive);
+		for (const id of [...this.routes.keys()]) {
+			if (!this.find(id)) this.routes.delete(id);
+		}
 		const follow = this.queen();
 		if (follow) {
 			const tx = this.looking > 0 ? this.lookX : follow.x;
@@ -1161,6 +1239,7 @@ export class Sim {
 			linked: false
 		});
 		this.note("Tower raised — mute until silk splices it to a live node.");
+		this.bakeNav();
 		const b = builders.find((w) => Math.hypot(w.x - q.x, w.y - q.y) < 160);
 		if (b) {
 			b.evo = "builder";
@@ -1746,51 +1825,66 @@ export class Sim {
 		const n = this.nest();
 		if (!n) return;
 		if (e.evo === "builder" && e.job === "build") {
-			if (Math.hypot(e.x - n.x, e.y - n.y) > 80) this.seek(e, n, dt);
-			else this.hold(e, dt);
+			if (Math.hypot(e.x - n.x, e.y - n.y) > 80) this.routeTo(e, n.x, n.y, dt);
+			else {
+				this.routes.delete(e.id);
+				this.hold(e, dt);
+			}
 			return;
 		}
 		if (e.haul > 0) {
-			this.seek(e, n, dt);
+			this.routeTo(e, n.x, n.y, dt);
 			if (Math.hypot(e.x - n.x, e.y - n.y) < 70) {
 				if (e.meat >= e.haul) this.food = Math.min(this.cap("food"), this.food + e.haul);
 				else this.material = Math.min(this.cap("material"), this.material + e.haul);
 				this.pop(n.x, n.y - 30, `+${e.haul}`, "#e8ebe4");
 				e.haul = 0;
+				e.targetId = 0;
 				e.foodMeter = e.foodMax;
 				this.audio?.deposit();
 				if (e.assignR > 0 && !this.patchHasYield(e)) {
 					e.assignR = 0;
+					this.routes.delete(e.id);
 					this.note("Patch stripped. Harvester is home.");
 				}
 			}
 			return;
 		}
 		if (e.job !== "harvest") {
-			if (Math.hypot(e.x - n.x, e.y - n.y) > 90) this.seek(e, n, dt);
-			else this.hold(e, dt);
+			if (Math.hypot(e.x - n.x, e.y - n.y) > 90) this.routeTo(e, n.x, n.y, dt);
+			else {
+				this.routes.delete(e.id);
+				this.hold(e, dt);
+			}
 			return;
 		}
 		if (e.assignR <= 0) {
-			if (Math.hypot(e.x - n.x, e.y - n.y) > 90) this.seek(e, n, dt);
-			else this.hold(e, dt);
+			if (Math.hypot(e.x - n.x, e.y - n.y) > 90) this.routeTo(e, n.x, n.y, dt);
+			else {
+				this.routes.delete(e.id);
+				this.hold(e, dt);
+			}
 			return;
 		}
 		const node = this.closestYield(e, e.assignX, e.assignY, e.assignR);
 		if (!node) {
-			this.seek(e, n, dt);
+			this.routeTo(e, n.x, n.y, dt);
 			if (Math.hypot(e.x - n.x, e.y - n.y) < 70) {
 				e.assignR = 0;
+				e.targetId = 0;
+				this.routes.delete(e.id);
 				this.note("Nothing left on the patch. Harvester rests.");
 			}
 			return;
 		}
-		this.seek(e, node, dt);
+		e.targetId = node.id;
+		this.routeTo(e, node.x, node.y, dt);
 		if (Math.hypot(e.x - node.x, e.y - node.y) < 28) {
 			const take = Math.min(6, node.meat || 4);
 			node.meat -= take;
 			e.haul = take + (e.transCap > 0 ? 6 : 0);
 			e.meat = node.kind === "node" ? take : 0;
+			e.targetId = 0;
 			if (node.kind === "pickup" || node.kind === "cocoon" || node.meat <= 0) node.alive = false;
 		}
 	}
@@ -1799,17 +1893,28 @@ export class Sim {
 	}
 	closestYield(e: Ent, x: number, y: number, r: number) {
 		let node;
-		let best = r * r;
+		let best = Infinity;
+		const r2 = r * r;
 		for (const o of this.ents) {
 			if (!o.alive || !this.yieldKind(o)) continue;
-			const d = (o.x - x) ** 2 + (o.y - y) ** 2;
+			const inPatch = (o.x - x) ** 2 + (o.y - y) ** 2;
+			if (inPatch > r2) continue;
+			if (this.claimedYield(o.id, e.id)) continue;
+			const d = dist2(e, o);
 			if (d < best) {
 				best = d;
 				node = o;
 			}
 		}
-		void e;
 		return node;
+	}
+	claimedYield(nodeId: number, selfId: number) {
+		for (const w of this.ents) {
+			if (!w.alive || w.id === selfId || w.caste !== "worker") continue;
+			if (w.haul > 0) continue;
+			if (w.targetId === nodeId) return true;
+		}
+		return false;
 	}
 	patchHasYield(e: Ent) {
 		if (e.assignR <= 0) return false;

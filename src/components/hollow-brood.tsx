@@ -174,6 +174,24 @@ export function HollowBrood() {
         sim.spawnAlly("worker", n.x + 40, n.y);
         return true;
       },
+      harvestAt: (x: number, y: number) => {
+        const w = sim.ents.find((e) => e.alive && e.caste === "worker");
+        if (!w) return false;
+        sim.selectedId = w.id;
+        sim.assignWorker("harvester");
+        sim.clickWorld(x, y);
+        return true;
+      },
+      workerPath: () => {
+        const w = sim.ents.find((e) => e.alive && e.caste === "worker" && e.job === "harvest") ?? sim.find(sim.selectedId);
+        const r = w ? sim.routes.get(w.id) : undefined;
+        return {
+          points: r?.pts.length ?? 0,
+          bends: Math.max(0, (r?.pts.length ?? 1) - 2),
+          gx: r?.gx ?? 0,
+          gy: r?.gy ?? 0,
+        };
+      },
       splice: () => sim.tryLink(),
       teleportQueen: (x: number, y: number) => {
         const q = sim.queen();

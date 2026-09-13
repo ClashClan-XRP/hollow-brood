@@ -537,6 +537,27 @@ export function render(
     ctx.globalAlpha = 1;
   }
 
+  for (const [id, route] of sim.routes) {
+    if (route.pts.length < 2) continue;
+    const on = id === sim.selectedId;
+    ctx.setLineDash(on ? [7, 6] : [4, 10]);
+    ctx.strokeStyle = on ? "rgba(183,201,106,0.85)" : "rgba(201,208,196,0.28)";
+    ctx.lineWidth = on ? 2.25 : 1.25;
+    ctx.beginPath();
+    ctx.moveTo(route.pts[0].x, route.pts[0].y);
+    for (let i = 1; i < route.pts.length; i++) ctx.lineTo(route.pts[i].x, route.pts[i].y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (!on) continue;
+    for (let i = 1; i < route.pts.length; i++) {
+      const p = route.pts[i];
+      ctx.fillStyle = "rgba(232,235,228,0.7)";
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
   const sel = sim.find(sim.selectedId);
   if (sel && sel.alive) {
     ctx.strokeStyle = "rgba(183,201,106,0.95)";

@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type HTMLAttributes, type PointerEvent, type ReactNode, type RefObject } from "react";
-import { Crown, Crosshair, Flag, Hammer, Home, Landmark, Pause, Play, Shield, Swords, Webhook } from "lucide-react";
+import { Crown, Crosshair, Flag, Hammer, Home, Landmark, Leaf, MapPin, Pause, Play, Shield, Swords, Webhook, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { GameAudio } from "@/game/audio";
 import { loadAssets, type SpriteBook } from "@/game/assets";
 import { Input } from "@/game/input";
 import { render, renderMinimap, screenToWorld, viewWorldSize } from "@/game/render";
 import { Sim } from "@/game/sim";
-import { DIFFICULTIES, FIXED_DT, WORLD_H, WORLD_W, type Difficulty, type Evo, type HudSnap, type RoomType } from "@/game/types";
+import { DIFFICULTIES, FIXED_DT, WORLD_H, WORLD_W, type Difficulty, type Evo, type HudSnap, type Job, type RoomType } from "@/game/types";
 import { cn } from "@/lib/utils";
 
 function emptyHud(): HudSnap {
@@ -57,6 +57,8 @@ function emptyHud(): HudSnap {
     silkDist: 0,
     silkMax: 420,
     silkCost: 2,
+    ally: null,
+    marking: false,
   };
 }
 
@@ -166,6 +168,12 @@ export function HollowBrood() {
         sim.tryLay("worker");
         return true;
       },
+      spawnWorker: () => {
+        const n = sim.nest();
+        if (!n) return false;
+        sim.spawnAlly("worker", n.x + 40, n.y);
+        return true;
+      },
       splice: () => sim.tryLink(),
       teleportQueen: (x: number, y: number) => {
         const q = sim.queen();
@@ -202,9 +210,10 @@ export function HollowBrood() {
       const vis = viewWorldSize(cssW, cssH);
       sim.setView(vis.w, vis.h);
       const aim = screenToWorld(actions.pointerX, actions.pointerY, sim.camX, sim.camY, cssW, cssH);
-      if (actions.justAttack) {
+      if (actions.justSelect) {
         if (sim.view === "nest") sim.clickNest(actions.pointerX / cssW, actions.pointerY / cssH);
         else sim.clickWorld(aim.x, aim.y);
+        setHud(sim.hud());
       }
       while (acc >= FIXED_DT) {
         if (sim.mode === "playing") {
@@ -264,7 +273,10 @@ export function HollowBrood() {
   return (
     <div
       ref={wrapRef}
-      className="relative h-dvh w-full overflow-hidden bg-bg text-foreground touch-none select-none"
+      className={cn(
+        "relative h-dvh w-full overflow-hidden bg-bg text-foreground touch-none select-none",
+        hud.marking && "cursor-crosshair",
+      )}
     >
       <canvas ref={canvasRef} className="absolute inset-0 h-full w-full touch-none" />
 
@@ -294,6 +306,22 @@ export function HollowBrood() {
           }}
           onExpand={(room) => {
             simRef.current.expandRoom(room);
+            setHud(simRef.current.hud());
+          }}
+          onAssignWorker={(kind) => {
+            simRef.current.assignWorker(kind);
+            setHud(simRef.current.hud());
+          }}
+          onAssignAttacker={(job) => {
+            simRef.current.assignAttacker(job);
+            setHud(simRef.current.hud());
+          }}
+          onMarkHarvest={() => {
+            simRef.current.beginMarkHarvest();
+            setHud(simRef.current.hud());
+          }}
+          onDeselect={() => {
+            simRef.current.deselect();
             setHud(simRef.current.hud());
           }}
         />
@@ -393,7 +421,7 @@ function TitleOverlay({
           })}
         </div>
         <p className="text-xs text-muted">
-          WASD move · Q silk splice on a mute tower · B raise tower · E/R/F brood
+          WASD move · tap an ally to order them · Q silk splice · Space bite
         </p>
         <div className="grid grid-cols-3 gap-2">
           <div className="rounded-xl border border-border bg-surface/80 px-3 py-2">
@@ -428,6 +456,10 @@ function Hud({
   onHold,
   onEvo,
   onExpand,
+  onAssignWorker,
+  onAssignAttacker,
+  onMarkHarvest,
+  onDeselect,
 }: {
   hud: HudSnap;
   miniRef: RefObject<HTMLCanvasElement | null>;
@@ -436,6 +468,10 @@ function Hud({
   onHold: (name: string, down: boolean) => void;
   onEvo: (id: Evo) => void;
   onExpand: (room: RoomType) => void;
+  onAssignWorker: (kind: "harvester" | "builder") => void;
+  onAssignAttacker: (job: Job) => void;
+  onMarkHarvest: () => void;
+  onDeselect: () => void;
 }) {
   return (
     <div data-ui className="pointer-events-none absolute inset-0 z-10">
@@ -497,8 +533,19 @@ function Hud({
           onPointerDown={onMini}
           aria-label="Minimap"
         />
-        <p className="px-1 py-0.5 text-xs uppercase tracking-wider text-muted">Map · fog of war</p>
+        <p className="px-1 py-0.5 text-xs uppercase tracking-wider text-muted">Map</p>
       </div>
+
+      {hud.ally && (
+        <AllyCard
+          hud={hud}
+          onEvo={onEvo}
+          onAssignWorker={onAssignWorker}
+          onAssignAttacker={onAssignAttacker}
+          onMarkHarvest={onMarkHarvest}
+          onDeselect={onDeselect}
+        />
+      )}
 
       {hud.view === "nest" && (
         <div className="pointer-events-auto absolute right-3 top-28 w-56 rounded-xl border border-border bg-surface p-3">
@@ -526,6 +573,115 @@ function Hud({
       )}
 
       <CommandBar hud={hud} onHold={onHold} />
+    </div>
+  );
+}
+
+function AllyCard({
+  hud,
+  onEvo,
+  onAssignWorker,
+  onAssignAttacker,
+  onMarkHarvest,
+  onDeselect,
+}: {
+  hud: HudSnap;
+  onEvo: (id: Evo) => void;
+  onAssignWorker: (kind: "harvester" | "builder") => void;
+  onAssignAttacker: (job: Job) => void;
+  onMarkHarvest: () => void;
+  onDeselect: () => void;
+}) {
+  const a = hud.ally;
+  if (!a) return null;
+  const harvester = a.caste === "worker" && (a.evo === "harvester" || a.job === "harvest");
+  return (
+    <div
+      data-ui
+      className="pointer-events-auto absolute right-3 top-24 w-56 rounded-xl border border-border bg-surface p-3 max-[720px]:bottom-36 max-[720px]:top-auto max-[720px]:w-52"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <p className="font-display text-lg leading-tight tracking-tight capitalize">{a.label}</p>
+          <p className="mt-0.5 text-xs uppercase tracking-wider text-muted">
+            {a.job === "none" ? "unassigned" : a.job}
+            {a.marked ? " · on patch" : ""}
+            {hud.marking ? " · marking" : ""}
+          </p>
+        </div>
+        <button
+          type="button"
+          aria-label="Deselect"
+          onClick={onDeselect}
+          className="grid size-9 place-items-center rounded-lg border border-border text-muted"
+        >
+          <X className="size-4" />
+        </button>
+      </div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-bg">
+        <div
+          className="h-full rounded-full bg-accent"
+          style={{ width: `${Math.max(0, Math.min(1, a.hp / a.maxHp)) * 100}%` }}
+        />
+      </div>
+      <p className="mt-1 text-xs tabular-nums text-muted">
+        {a.hp}/{a.maxHp} hp
+      </p>
+
+      {a.caste === "worker" && (
+        <div className="mt-3">
+          <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted">Assign</p>
+          <div className="mt-2 flex flex-col gap-2">
+            <Button size="sm" variant={harvester ? "default" : "secondary"} onClick={() => onAssignWorker("harvester")}>
+              <Leaf className="size-3.5" /> Harvester
+            </Button>
+            <Button size="sm" variant={a.evo === "builder" ? "default" : "secondary"} onClick={() => onAssignWorker("builder")}>
+              <Hammer className="size-3.5" /> Builder
+            </Button>
+            {harvester && (
+              <Button size="sm" variant={hud.marking ? "default" : "secondary"} onClick={onMarkHarvest}>
+                <MapPin className="size-3.5" /> {hud.marking ? "Click a patch" : "Mark patch"}
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {a.caste === "attacker" && (
+        <div className="mt-3">
+          <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted">Assign</p>
+          <div className="mt-2 flex flex-col gap-2">
+            <Button size="sm" variant="secondary" onClick={() => onAssignAttacker("follow")}>
+              Follow queen
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => onAssignAttacker("rove")}>
+              Rove
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => onAssignAttacker("guard")}>
+              Guard
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {hud.evoOptions.length > 0 && (
+        <div className="mt-3">
+          <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted">Evo</p>
+          <div className="mt-2 flex flex-col gap-2">
+            {hud.evoOptions.map((o) => (
+              <Button
+                key={o.id}
+                size="sm"
+                variant="secondary"
+                disabled={hud.food < o.costF || hud.material < o.costM}
+                onClick={() => onEvo(o.id as Evo)}
+              >
+                {o.label} · {o.costF}f {o.costM}m
+              </Button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -625,7 +781,7 @@ function CommandBar({
 
         <div className="flex flex-col items-end gap-3">
           <div className="flex gap-3">
-            <RoundBtn label="Assign" hotkey="C" icon={<Flag />} {...press("follow")} />
+            <RoundBtn label="Attend" hotkey="C" icon={<Flag />} {...press("follow")} />
             <RoundBtn
               label={hud.canLink ? "Splice" : "Silk"}
               hotkey="Q"
@@ -636,7 +792,7 @@ function CommandBar({
             />
             <RoundBtn label="Venom" hotkey="V" icon={<Crosshair />} cool={hud.venomCd} {...press("venom")} />
           </div>
-          <RoundBtn label="Bite" hotkey="LMB" icon={<Swords />} large {...press("bite")} />
+          <RoundBtn label="Bite" hotkey="Space" icon={<Swords />} large {...press("bite")} />
         </div>
       </div>
     </div>

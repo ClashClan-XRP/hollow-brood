@@ -13,6 +13,7 @@ export const SILK_LINK_RANGE = 420;
 /** Queen / heir must stand this close to a mute tower to splice silk. */
 export const SILK_STAND = 78;
 export const SILK_COST = 2;
+export const HARVEST_R = 170;
 
 export const SITES = {
   meadow: { x: 2140, y: 720, r: 180 },
@@ -197,6 +198,9 @@ export type Ent = {
   sniper: number;
   transCap: number;
   haul: number;
+  assignX: number;
+  assignY: number;
+  assignR: number;
 };
 
 export type Particle = {
@@ -221,6 +225,18 @@ export type Floater = {
 export type Ticker = { text: string; life: number };
 
 export type UpgradeId = "fang" | "carapace" | "silk" | "brood";
+
+export type AllySnap = {
+  id: number;
+  caste: Caste;
+  evo: Evo;
+  job: Job;
+  hp: number;
+  maxHp: number;
+  winged: boolean;
+  marked: boolean;
+  label: string;
+};
 
 export type HudSnap = {
   mode: GameMode;
@@ -269,6 +285,8 @@ export type HudSnap = {
   silkDist: number;
   silkMax: number;
   silkCost: number;
+  ally: AllySnap | null;
+  marking: boolean;
 };
 
 export type ControlsProbe = {
@@ -295,6 +313,7 @@ export type SilkProbe = {
   };
   raise: () => number;
   layWorker: () => boolean;
+  spawnWorker: () => boolean;
   splice: () => "spliced" | "blocked" | "none";
   teleportQueen: (x: number, y: number) => void;
   setStores: (food: number, material: number) => void;

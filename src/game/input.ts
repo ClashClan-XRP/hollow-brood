@@ -20,6 +20,7 @@ export type Actions = {
   justQueenEgg: boolean;
   justTower: boolean;
   justFollow: boolean;
+  justSelect: boolean;
   nest: boolean;
   attackEgg: boolean;
   defend: boolean;
@@ -53,6 +54,7 @@ const empty = (): Actions => ({
   justQueenEgg: false,
   justTower: false,
   justFollow: false,
+  justSelect: false,
   nest: false,
   attackEgg: false,
   defend: false,
@@ -88,6 +90,10 @@ export class Input {
   joy = { x: 0, y: 0, active: false, id: -1 };
   joyOrigin = { x: 0, y: 0 };
   private buttons = new Set<string>();
+  private selectQueued = false;
+  private downX = 0;
+  private downY = 0;
+  private downPtr = -1;
 
   attach(el: HTMLElement) {
     const onDown = (e: KeyboardEvent) => {
@@ -126,9 +132,10 @@ export class Input {
         this.joy.x = 0;
         this.joy.y = 0;
         el.setPointerCapture(e.pointerId);
-      } else if (e.pointerType === "mouse") {
-        if (e.button === 0) this.buttons.add("mouse");
-        if (e.button === 2) this.buttons.add("rmouse");
+      } else {
+        this.downX = x;
+        this.downY = y;
+        this.downPtr = e.pointerId;
       }
     };
     const onPtrMove = (e: PointerEvent) => {
@@ -150,11 +157,18 @@ export class Input {
         this.joy.id = -1;
         this.joy.x = 0;
         this.joy.y = 0;
+        this.downPtr = -1;
+        return;
       }
-      if (e.pointerType === "mouse") {
-        if (e.button === 0) this.buttons.delete("mouse");
-        if (e.button === 2) this.buttons.delete("rmouse");
+      if (e.pointerId === this.downPtr) {
+        const r = el.getBoundingClientRect();
+        const x = e.clientX - r.left;
+        const y = e.clientY - r.top;
+        const moved = Math.hypot(x - this.downX, y - this.downY);
+        if (moved < 18) this.selectQueued = true;
+        this.downPtr = -1;
       }
+      if (e.pointerType === "mouse" && e.button === 2) this.buttons.delete("rmouse");
     };
     const onCtx = (e: Event) => e.preventDefault();
     window.addEventListener("keydown", onDown);
@@ -234,7 +248,7 @@ export class Input {
     a.moveX = mx;
     a.moveY = my;
 
-    a.attack = a.attack || has("Space") || this.buttons.has("mouse") || this.buttons.has("bite");
+    a.attack = a.attack || has("Space") || this.buttons.has("bite");
     a.wrap = a.wrap || this.buttons.has("wrap");
     a.web = a.web || has("KeyQ") || this.buttons.has("web");
     a.egg = a.egg || has("KeyE") || this.buttons.has("egg");
@@ -263,6 +277,8 @@ export class Input {
     a.justQueenEgg = a.queenEgg && !this.prev.queenEgg;
     a.justTower = a.tower && !this.prev.tower;
     a.justFollow = a.follow && !this.prev.follow;
+    a.justSelect = this.selectQueued;
+    this.selectQueued = false;
     this.actions = a;
     void src;
     return a;

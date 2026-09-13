@@ -537,20 +537,34 @@ export function render(
     ctx.globalAlpha = 1;
   }
 
-  const fog = sim.fog;
-  const x0 = Math.max(0, Math.floor(originX / FOG_CELL) - 1);
-  const y0 = Math.max(0, Math.floor(originY / FOG_CELL) - 1);
-  const x1 = Math.min(fog.cols, Math.ceil((originX + visW) / FOG_CELL) + 1);
-  const y1 = Math.min(fog.rows, Math.ceil((originY + visH) / FOG_CELL) + 1);
-  for (let cy = y0; cy < y1; cy++) {
-    for (let cx = x0; cx < x1; cx++) {
-      const i = cy * fog.cols + cx;
-      const vis = fog.visible[i];
-      const exp = fog.explored[i];
-      if (vis) continue;
-      ctx.fillStyle = exp ? "rgba(6,10,8,0.58)" : "#050807";
-      ctx.fillRect(cx * FOG_CELL, cy * FOG_CELL, FOG_CELL + 1, FOG_CELL + 1);
+  const sel = sim.find(sim.selectedId);
+  if (sel && sel.alive) {
+    ctx.strokeStyle = "rgba(183,201,106,0.95)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(sel.x, sel.y, Math.max(18, sel.r + 10), 0, Math.PI * 2);
+    ctx.stroke();
+    if (sel.assignR > 0) {
+      ctx.setLineDash([5, 8]);
+      ctx.strokeStyle = "rgba(183,201,106,0.55)";
+      ctx.beginPath();
+      ctx.arc(sel.assignX, sel.assignY, sel.assignR, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = "rgba(183,201,106,0.18)";
+      ctx.beginPath();
+      ctx.arc(sel.assignX, sel.assignY, 6, 0, Math.PI * 2);
+      ctx.fill();
     }
+  }
+  if (sim.marking && sel) {
+    ctx.setLineDash([4, 7]);
+    ctx.strokeStyle = "rgba(232,235,228,0.45)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(sel.x, sel.y, 26, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
 
   ctx.restore();

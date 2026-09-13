@@ -150,7 +150,7 @@ function authPopupPlugin(): Plugin {
 export default defineConfig(({ command, isPreview }) => {
   const pages = process.env.PAGES === "1";
   return {
-    base: pages ? "/hollow-brood/" : "/",
+    base: pages ? "./" : "/",
     server: {
       host: "0.0.0.0",
       port: 8080,

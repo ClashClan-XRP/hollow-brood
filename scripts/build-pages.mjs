@@ -29,7 +29,12 @@ function run(command, args) {
 await run("node", [join(root, "scripts", "with-app-env.mjs"), "vite", "build"]);
 
 const shell = readFileSync(join(clientDir, "_shell.html"));
-const html = shell.filter((b) => b !== 0);
+const html = Buffer.from(
+  shell
+    .filter((b) => b !== 0)
+    .toString("utf8")
+    .replaceAll("/./", "./"),
+);
 writeFileSync(join(clientDir, "index.html"), html);
 writeFileSync(join(clientDir, "404.html"), html);
 writeFileSync(join(clientDir, ".nojekyll"), "");

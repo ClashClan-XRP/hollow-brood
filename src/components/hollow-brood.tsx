@@ -67,6 +67,7 @@ function emptyHud(): HudSnap {
     groups: [],
     eggs: [],
     orders: [],
+    nestOpen: false,
   };
 }
 
@@ -277,8 +278,7 @@ export function HollowBrood() {
       sim.setView(vis.w, vis.h);
       const aim = screenToWorld(actions.pointerX, actions.pointerY, sim.camX, sim.camY, cssW, cssH);
       if (actions.justSelect) {
-        if (sim.view === "nest") sim.clickNest(actions.pointerX / cssW, actions.pointerY / cssH);
-        else if (sim.view === "hive") sim.clickHive(actions.pointerX / cssW, actions.pointerY / cssH);
+        if (sim.view === "hive") sim.clickHive(actions.pointerX / cssW, actions.pointerY / cssH);
         else sim.clickWorld(aim.x, aim.y);
         setHud(sim.hud());
       }
@@ -658,32 +658,81 @@ function Hud({
         </div>
       )}
 
-      {hud.view === "nest" && (
-        <div className="pointer-events-auto absolute right-3 top-28 w-56 rounded-xl border border-border bg-surface p-3">
-          <p className="font-display text-lg tracking-tight">Below</p>
-          <p className="mt-1 text-xs text-muted">
-            {hud.room || "chamber"} · {hud.selected || "no brood selected"}
-          </p>
-          <Button size="sm" className="mt-2 w-full" variant="secondary" onClick={() => onExpand(hud.room || "food")}>
-            Expand room
-          </Button>
-          <div className="mt-3 flex flex-col gap-2">
-            {hud.evoOptions.map((o) => (
-              <Button
-                key={o.id}
-                size="sm"
-                variant="secondary"
-                disabled={hud.food < o.costF || hud.material < o.costM}
-                onClick={() => onEvo(o.id as Evo)}
-              >
-                {o.label} · {o.costF}f {o.costM}m
-              </Button>
-            ))}
+      {hud.nestOpen && (
+        <div
+          data-ui
+          className="pointer-events-auto absolute inset-x-3 bottom-32 top-20 z-20 mx-auto flex w-full max-w-md flex-col rounded-xl border border-border bg-surface p-3 shadow-lg"
+        >
+          <div className="flex items-center gap-2">
+            <Home className="size-5 text-accent" />
+            <p className="font-display text-xl tracking-tight">The hollow</p>
+            <p className="text-xs text-muted">Rooms · level and size</p>
+            <button
+              type="button"
+              aria-label="Close nest"
+              onClick={() => onCommand("below")}
+              className="ml-auto grid size-11 place-items-center rounded-lg border border-border text-muted"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+          <div className="mt-3 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
+            {([...hud.rooms].sort((a, b) => {
+              const order = ["hatchery", "food", "material", "chrysalis", "chamber"];
+              return order.indexOf(a.type) - order.indexOf(b.type);
+            })).map((r) => {
+              const next =
+                r.type === "hatchery" ? hud.broodMax + 3 : Math.round(r.cap * 1.35);
+              const cost = r.upgrade ?? 0;
+              const can = hud.material >= cost;
+              const size =
+                r.type === "hatchery"
+                  ? `${hud.broodMax} brood`
+                  : r.type === "food"
+                    ? `${r.cap} food`
+                    : r.type === "material"
+                      ? `${r.cap} scrap`
+                      : r.type === "chrysalis"
+                        ? `${r.cap} berths`
+                        : `hall ${r.cap}`;
+              const title =
+                r.type === "hatchery"
+                  ? "Hatchery"
+                  : r.type === "food"
+                    ? "Food stores"
+                    : r.type === "material"
+                      ? "Scrap stores"
+                      : r.type === "chrysalis"
+                        ? "Chrysalis"
+                        : "Queen chamber";
+              return (
+                <div key={r.type} className="rounded-lg border border-border bg-bg px-3 py-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="font-medium">{title}</p>
+                      <p className="text-xs capitalize text-muted">
+                        Level {r.level} · {size}
+                        {r.type === "food" || r.type === "material" ? ` · ${Math.floor(r.stored)} held` : ""}
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={!can}
+                      onClick={() => onExpand(r.type)}
+                    >
+                      Expand · {cost}m
+                    </Button>
+                  </div>
+                  <p className="mt-1 text-xs text-muted">Next size {next}</p>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
 
-      <CommandBar hud={hud} onHold={onHold} onAssign={onAssign} />
+      <CommandBar hud={hud} onHold={onHold} onAssign={onAssign} onCommand={onCommand} />
     </div>
   );
 }
@@ -836,10 +885,12 @@ function CommandBar({
   hud,
   onHold,
   onAssign,
+  onCommand,
 }: {
   hud: HudSnap;
   onHold: (name: string, down: boolean) => void;
   onAssign: () => void;
+  onCommand: (id: string) => void;
 }) {
   const press = (name: string) => ({
     onPointerDown: (e: PointerEvent) => {
@@ -867,6 +918,14 @@ function CommandBar({
           <Users className="size-5 text-accent" />
           Assign
           {picked > 0 && <span className="tabular-nums text-muted">{picked}</span>}
+        </button>
+        <button
+          type="button"
+          onClick={() => onCommand("below")}
+          className="flex min-h-11 min-w-36 items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 py-2 text-sm font-medium"
+        >
+          <Home className="size-4 text-accent" />
+          {hud.nestOpen ? "Close nest" : "Enter nest"}
         </button>
         <p className="text-xs uppercase tracking-[0.16em] text-muted">Brood {hud.brood}/{hud.broodMax}</p>
       </div>

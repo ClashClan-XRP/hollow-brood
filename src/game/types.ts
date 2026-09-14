@@ -94,6 +94,7 @@ export type Room = {
   level: number;
   cap: number;
   stored: number;
+  upgrade?: number;
 };
 
 export type Site = {
@@ -387,6 +388,7 @@ export type HudSnap = {
   selected: string;
   room: RoomType | "";
   rooms: Room[];
+  nestOpen: boolean;
   evoOptions: { id: string; label: string; costF: number; costM: number }[];
   succession: { id: number; label: string }[];
   discovered: string[];

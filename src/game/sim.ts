@@ -129,6 +129,7 @@ export class Sim {
 	selectedId = 0;
 	selectedIds: number[] = [];
 	selectedRoom: RoomType = "hatchery";
+	nestOpen = false;
 	webCd = 0;
 	venomCd = 0;
 	trauma = 0;
@@ -314,6 +315,7 @@ export class Sim {
 		this.selectedId = 0;
 		this.selectedIds = [];
 		this.selectedRoom = "hatchery";
+		this.nestOpen = false;
 		this.looking = 0;
 		this.marking = false;
 		this.dropTick = 0;
@@ -1714,8 +1716,13 @@ export class Sim {
 		const q = this.queen();
 		const n = this.nest();
 		if (!q) return;
-		if (this.view === "nest" || this.view === "hive") {
+		if (this.view === "hive") {
 			this.view = "world";
+			this.hiveId = 0;
+			return;
+		}
+		if (this.nestOpen) {
+			this.nestOpen = false;
 			return;
 		}
 		const hive = this.ents.find((e) => e.alive && e.kind === "hive" && Math.hypot(q.x - e.x, q.y - e.y) < 90);
@@ -1726,16 +1733,18 @@ export class Sim {
 		}
 		if (!n) return;
 		if (Math.hypot(q.x - n.x, q.y - n.y) > 160) {
-			this.note("The queen must be at the hollow to go below.");
+			this.note("The queen must be at the hollow to enter the nest.");
 			return;
 		}
-		this.view = "nest";
+		this.nestOpen = true;
+		this.view = "world";
+		this.note("Chambers of the hollow. Expand a room to grow the brood.");
 	}
 	tryLay(kind: EggKind) {
 		const q = this.queen();
 		const n = this.nest();
 		if (!q || !n) return;
-		if (Math.hypot(q.x - n.x, q.y - n.y) > 170 && this.view !== "nest") {
+		if (Math.hypot(q.x - n.x, q.y - n.y) > 170 && !this.nestOpen) {
 			this.note("Return to the hollow to lay.");
 			return;
 		}
@@ -2117,7 +2126,6 @@ export class Sim {
 		this.marking = false;
 	}
 	clickWorld(x: number, y: number) {
-		if (this.view === "nest") return;
 		if (this.view === "hive") {
 			this.clickHive(x, y);
 			return;
@@ -2561,7 +2569,7 @@ export class Sim {
 				this.opt("lay-worker", "Lay worker", "order", atNest && food >= this.workerCost() && !broodFull, !atNest ? "Queen must be at the hollow." : broodFull ? "Hatchery is full." : `Need ${this.workerCost()} food.`, this.workerCost(), 0),
 				this.opt("lay-defender", "Lay defender", "order", atNest && food >= this.defendCost() && !broodFull, !atNest ? "Queen must be at the hollow." : broodFull ? "Hatchery is full." : `Need ${this.defendCost()} food.`, this.defendCost(), 0),
 				this.opt("lay-attacker", "Lay attacker", "order", atNest && food >= this.attackCost() && !broodFull, !atNest ? "Queen must be at the hollow." : broodFull ? "Hatchery is full." : `Need ${this.attackCost()} food.`, this.attackCost(), 0),
-				this.opt("below", "Go below", "order", atNest || this.view === "nest", "Stand at the hollow."),
+				this.opt("below", "Enter nest", "order", atNest || this.nestOpen, "Stand at the hollow."),
 			];
 			for (const ev of this.evoFor(e)) {
 				const ok = food >= ev.costF && mat >= ev.costM;
@@ -3721,7 +3729,8 @@ export class Sim {
 			ticker: this.tickers[0]?.text ?? "",
 			selected: sel ? this.selectLabel(sel) : "",
 			room: this.selectedRoom,
-			rooms: this.rooms.map((r) => ({ ...r })),
+			rooms: this.rooms.map((r) => ({ ...r, upgrade: this.roomCost(r.level) })),
+			nestOpen: this.nestOpen,
 			evoOptions: sel && sel.kind === "brood"
 				? this.evoFor(sel).filter((o) => sel.caste !== "worker" || o.id === "air")
 				: [],

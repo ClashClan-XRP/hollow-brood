@@ -142,10 +142,6 @@ export function render(
     renderHive(ctx, sim, sprites, viewW, viewH);
     return;
   }
-  if (sim.view === "nest") {
-    renderNest(ctx, sim, sprites, viewW, viewH);
-    return;
-  }
 
   const { z, w: visW, h: visH } = viewWorldSize(viewW, viewH);
   const shake = sim.trauma * sim.trauma;
@@ -751,66 +747,6 @@ function renderHive(
     ctx.fillStyle = "#8a9388";
     ctx.fillText("The caches are empty.", viewW / 2, viewH / 2);
   }
-}
-
-function renderNest(
-  ctx: CanvasRenderingContext2D,
-  sim: Sim,
-  sprites: SpriteBook,
-  viewW: number,
-  viewH: number,
-) {
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = "#0b100e";
-  ctx.fillRect(0, 0, viewW, viewH);
-  const img = sprites.nestInside;
-  if (img.complete && img.naturalWidth) {
-    const s = Math.max(viewW / img.naturalWidth, viewH / img.naturalHeight);
-    const w = img.naturalWidth * s;
-    const h = img.naturalHeight * s;
-    ctx.drawImage(img, (viewW - w) / 2, (viewH - h) / 2, w, h);
-  }
-  const rooms: { type: string; x: number; y: number; label: string }[] = [
-    { type: "material", x: 0.28, y: 0.3, label: "Material" },
-    { type: "chrysalis", x: 0.72, y: 0.28, label: "Chrysalis" },
-    { type: "chamber", x: 0.5, y: 0.5, label: "Queen" },
-    { type: "hatchery", x: 0.3, y: 0.72, label: "Hatchery" },
-    { type: "food", x: 0.72, y: 0.7, label: "Food" },
-  ];
-  ctx.font = "600 14px Figtree, sans-serif";
-  ctx.textAlign = "center";
-  for (const r of rooms) {
-    const x = r.x * viewW;
-    const y = r.y * viewH;
-    const on = sim.selectedRoom === r.type;
-    ctx.fillStyle = on ? "rgba(183,201,106,0.28)" : "rgba(11,16,14,0.35)";
-    ctx.beginPath();
-    ctx.ellipse(x, y, 70, 46, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#e8ebe4";
-    ctx.fillText(r.label, x, y - 36);
-    const room = sim.rooms.find((o) => o.type === r.type);
-    if (room) {
-      ctx.fillStyle = "#8a9388";
-      ctx.fillText(`Lv ${room.level} · ${Math.floor(room.stored)}/${room.cap}`, x, y + 48);
-    }
-  }
-  const brood = sim.ents.filter((e) => e.alive && e.faction === "spider" && (e.kind === "brood" || e.kind === "queen" || e.kind === "egg"));
-  brood.forEach((e, i) => {
-    const slot = rooms[i % rooms.length];
-    const x = slot.x * viewW + Math.cos(i) * 28;
-    const y = slot.y * viewH + Math.sin(i * 1.3) * 18;
-    const dir = facingDraw(e.facing);
-    if (e.kind === "queen") {
-      drawCell(ctx, sprites.queenWalk, 4, 4, dir.row, 0, x, y, e.stage === "adolescent" ? 48 : 64, 0, dir.flip);
-    } else if (e.kind === "egg") {
-      drawProp(ctx, sprites.eggs, x, y, 28, 28);
-    } else if (e.stage === "chrysalis") {
-      drawProp(ctx, sprites.cocoon, x, y, 32, 32);
-    } else {
-      drawCell(ctx, sprites.spiderlingWalk, 4, 4, dir.row, 0, x, y, 28, 0, dir.flip);
-    }
-  });
 }
 
 export function renderMinimap(

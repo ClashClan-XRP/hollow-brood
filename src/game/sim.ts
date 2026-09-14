@@ -910,13 +910,32 @@ export class Sim {
 		return this.ents.find((e) => e.id === id && e.alive);
 	}
 	inPerim(x: number, y: number) {
+		return this.inOrderNet(x, y);
+	}
+	inOrderNet(x: number, y: number) {
 		const nest = this.nest();
 		if (nest && Math.hypot(x - nest.x, y - nest.y) < NEST_PERIM) return true;
 		for (const tw of this.ents) {
 			if (!tw.alive || tw.kind !== "tower" || !this.silkPowered(tw.id)) continue;
 			if (Math.hypot(x - tw.x, y - tw.y) < TOWER_PERIM) return true;
 		}
+		for (const l of this.links) {
+			const a = this.find(l.a);
+			const b = this.find(l.b);
+			if (!a || !b) continue;
+			if (!this.silkPowered(a.id) && !(nest && a.id === nest.id)) continue;
+			if (!this.silkPowered(b.id) && !(nest && b.id === nest.id)) continue;
+			if (this.segDist(x, y, a.x, a.y, b.x, b.y) < 58) return true;
+		}
 		return false;
+	}
+	segDist(px: number, py: number, ax: number, ay: number, bx: number, by: number) {
+		const dx = bx - ax;
+		const dy = by - ay;
+		const l2 = dx * dx + dy * dy;
+		if (l2 < 1) return Math.hypot(px - ax, py - ay);
+		const t = clamp(((px - ax) * dx + (py - ay) * dy) / l2, 0, 1);
+		return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
 	}
 	linkedNodes() {
 		const out: { x: number; y: number; id: number }[] = [];
@@ -957,15 +976,25 @@ export class Sim {
 	silkAnchor(tower: Ent) {
 		let best: { x: number; y: number; id: number } | undefined;
 		let bestD = Infinity;
+		let fallback: { x: number; y: number; id: number } | undefined;
+		let fallD = Infinity;
+		const range2 = SILK_LINK_RANGE * SILK_LINK_RANGE;
 		for (const n of this.linkedNodes()) {
 			if (n.id === tower.id) continue;
 			const d = dist2(tower, n);
-			if (d < bestD) {
+			if (d < fallD) {
+				fallD = d;
+				fallback = n;
+			}
+			if (d <= range2 && d < bestD) {
 				bestD = d;
 				best = n;
 			}
 		}
-		return best;
+		return best ?? fallback;
+	}
+	hasLink(a: number, b: number) {
+		return this.links.some((l) => (l.a === a && l.b === b) || (l.b === a && l.a === b));
 	}
 	silkQuery(from: Ent | undefined = this.queen()) {
 		const empty = {
@@ -979,58 +1008,103 @@ export class Sim {
 			hint: "",
 		};
 		if (!from) return empty;
-		const mutes = this.ents.filter((e) => e.alive && e.kind === "tower" && !e.linked);
-		const towers = this.ents.filter((e) => e.alive && e.kind === "tower");
-		const detect = (SILK_STAND + 240) * (SILK_STAND + 240);
-		let tower: Ent | undefined;
-		let best = detect;
-		for (const e of mutes) {
+		const mutes = this.ents.filter((e) => e.alive && e.kind === "tower" && !this.silkPowered(e.id));
+		const liveAtFeet = this.linkedNodes().find((n) => Math.hypot(from.x - n.x, from.y - n.y) <= SILK_STAND);
+		const muteAtFeet = mutes.reduce<Ent | undefined>((best, e) => {
 			const d = dist2(from, e);
-			if (d < best) {
-				best = d;
-				tower = e;
-			}
+			if (d > (SILK_STAND + 240) ** 2) return best;
+			if (!best || d < dist2(from, best)) return e;
+			return best;
+		}, undefined);
+
+		const readyHint = (toNest: boolean, web: boolean) => {
+			if (this.material < this.silkCost()) return `Need ${this.silkCost()} material to spin the strand.`;
+			if (toNest) return `Silk ready · ${this.silkCost()} mat. Q splices this tower to the hollow — defenders will hear it.`;
+			if (web) return `Silk ready · ${this.silkCost()} mat. Q weaves tower to tower. The web carries alerts and harvest orders.`;
+			return `Silk ready · ${this.silkCost()} mat. Q knits into the tower net — the perimeter grows.`;
+		};
+
+		if (muteAtFeet) {
+			const tower = muteAtFeet;
+			const standOk = Math.hypot(from.x - tower.x, from.y - tower.y) <= SILK_STAND;
+			const anchor = this.silkAnchor(tower);
+			const dist = anchor ? Math.hypot(tower.x - anchor.x, tower.y - anchor.y) : 0;
+			const reachOk = Boolean(anchor) && dist <= SILK_LINK_RANGE;
+			let hint = "Mute tower. Stand on the post to splice silk.";
+			if (!standOk) hint = "Move onto the mute tower. Silk splices at the post, not from range.";
+			else if (!reachOk) hint = `Too far from the net. Need a live node within ${SILK_LINK_RANGE} paces.`;
+			else hint = readyHint(this.nest()?.id === anchor!.id, Boolean(anchor && this.find(anchor.id)?.kind === "tower"));
+			return {
+				tower,
+				anchor,
+				standOk,
+				reachOk,
+				costOk: this.material >= this.silkCost(),
+				ready: standOk && reachOk && this.material >= this.silkCost(),
+				dist,
+				hint,
+			};
 		}
-		if (!tower) {
-			if (mutes.length) {
-				return { ...empty, hint: "A mute tower waits. Walk onto the post, then Q." };
+
+		if (liveAtFeet) {
+			let mute: Ent | undefined;
+			let muteD = Infinity;
+			for (const e of mutes) {
+				const d = Math.hypot(e.x - liveAtFeet.x, e.y - liveAtFeet.y);
+				if (d <= SILK_LINK_RANGE && d < muteD) {
+					muteD = d;
+					mute = e;
+				}
 			}
-			const nearLive = this.linkedNodes().find((n) => Math.hypot(from.x - n.x, from.y - n.y) < 170);
-			if (nearLive) {
+			if (mute) {
+				const costOk = this.material >= this.silkCost();
 				return {
-					...empty,
-					hint: `Live node. Raise the next tower inside ${SILK_LINK_RANGE} paces, then stand on it.`,
+					tower: mute,
+					anchor: liveAtFeet,
+					standOk: true,
+					reachOk: true,
+					costOk,
+					ready: costOk,
+					dist: muteD,
+					hint: readyHint(false, true),
 				};
 			}
-			if (!towers.length) {
-				return { ...empty, hint: "Raise a tower (B), stand on the post, then Q to splice silk." };
+			let peer: { x: number; y: number; id: number } | undefined;
+			let peerD = Infinity;
+			for (const n of this.linkedNodes()) {
+				if (n.id === liveAtFeet.id) continue;
+				if (this.hasLink(liveAtFeet.id, n.id)) continue;
+				const d = Math.hypot(n.x - liveAtFeet.x, n.y - liveAtFeet.y);
+				if (d <= SILK_LINK_RANGE && d < peerD) {
+					peerD = d;
+					peer = n;
+				}
 			}
-			return empty;
+			if (peer) {
+				const liveTower = this.find(liveAtFeet.id);
+				const costOk = this.material >= this.silkCost();
+				return {
+					tower: liveTower?.kind === "tower" ? liveTower : this.find(peer.id),
+					anchor: liveTower?.kind === "tower" ? peer : liveAtFeet,
+					standOk: true,
+					reachOk: true,
+					costOk,
+					ready: Boolean(liveTower || this.find(peer.id)) && costOk,
+					dist: peerD,
+					hint: readyHint(this.nest()?.id === peer.id || this.nest()?.id === liveAtFeet.id, true),
+				};
+			}
+			return {
+				...empty,
+				hint: `Live node. Raise the next tower inside ${SILK_LINK_RANGE} paces. Q weaves mute posts into this web.`,
+			};
 		}
-		const standOk = Math.hypot(from.x - tower.x, from.y - tower.y) <= SILK_STAND;
-		const anchor = this.silkAnchor(tower);
-		const dist = anchor ? Math.hypot(tower.x - anchor.x, tower.y - anchor.y) : 0;
-		const reachOk = Boolean(anchor) && dist <= SILK_LINK_RANGE;
-		let hint = "Mute tower. Stand on the post to splice silk.";
-		if (!standOk) hint = "Move onto the mute tower. Silk splices at the post, not from range.";
-		else if (!reachOk) hint = `Too far from the net. Need a live node within ${SILK_LINK_RANGE} paces.`;
-		else if (this.material < this.silkCost()) hint = `Need ${this.silkCost()} material to spin the strand.`;
-		else {
-			const toNest = this.nest()?.id === anchor!.id;
-			hint = toNest
-				? `Silk ready · ${this.silkCost()} mat. Q splices this tower to the hollow — defenders will hear it.`
-				: `Silk ready · ${this.silkCost()} mat. Q knits into the tower net — air will answer this ring.`;
+
+		if (mutes.length) return { ...empty, hint: "A mute tower waits. Walk onto the post, then Q — or stand on a live post to pull it in." };
+		if (!this.ents.some((e) => e.alive && e.kind === "tower")) {
+			return { ...empty, hint: "Raise a tower (B), stand on the post, then Q to splice silk." };
 		}
-		return {
-			tower,
-			anchor,
-			standOk,
-			reachOk,
-			costOk: this.material >= this.silkCost(),
-			ready: standOk && reachOk && this.material >= this.silkCost(),
-			dist,
-			hint,
-		};
+		return empty;
 	}
 	silkPreview() {
 		const s = this.silkQuery(this.queen());
@@ -1737,10 +1811,13 @@ export class Sim {
 		return "spliced";
 	}
 	spliceSilk(tower: Ent, anchor: { id: number; x: number; y: number }, who: "queen" | "teen") {
-		if (!tower.alive || tower.kind !== "tower" || tower.linked) return;
-		if (this.links.some((l) => (l.a === tower.id && l.b === anchor.id) || (l.b === tower.id && l.a === anchor.id))) return;
+		if (!tower.alive || tower.kind !== "tower") return;
+		if (tower.id === anchor.id) return;
+		if (this.hasLink(tower.id, anchor.id)) return;
 		if (who === "queen") this.spendMat(this.silkCost());
 		tower.linked = true;
+		const other = this.find(anchor.id);
+		if (other && other.kind === "tower") other.linked = true;
 		this.links.push({ a: anchor.id, b: tower.id });
 		const toNest = this.nest()?.id === anchor.id;
 		this.note(
@@ -1750,7 +1827,7 @@ export class Sim {
 					: "A princess stretches the net. Air will answer this ring."
 				: toNest
 					? "Silk sings to the hollow. Nest defenders will answer this tower."
-					: "Silk knits tower to tower. The perimeter grows; air answers without orders.",
+					: "Silk knits tower to tower. Alerts and harvest orders ride the web.",
 		);
 		this.audio?.web();
 		this.pop(tower.x, tower.y - 28, toNest ? "Hive net" : "Tower net", "#e8ebe4");

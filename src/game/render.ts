@@ -190,6 +190,12 @@ export function render(
 
   for (const n of sim.linkedNodes()) {
     if (nest && n.id === nest.id) continue;
+    ctx.setLineDash([5, 12]);
+    ctx.strokeStyle = "rgba(183,201,106,0.28)";
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, TOWER_PERIM, 0, Math.PI * 2);
+    ctx.stroke();
     ctx.setLineDash([3, 16]);
     ctx.strokeStyle = "rgba(232,235,228,0.1)";
     ctx.lineWidth = 1.25;

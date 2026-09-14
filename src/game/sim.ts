@@ -157,6 +157,7 @@ export class Sim {
 	marking = false;
 	dropTick = 0;
 	dropCount = 0;
+	homeRegen = 0;
 	nestAlarm = 0;
 	hiveId = 0;
 	incomeLog: { t: number; f: number; m: number }[] = [];
@@ -317,6 +318,7 @@ export class Sim {
 		this.marking = false;
 		this.dropTick = 0;
 		this.dropCount = 0;
+		this.homeRegen = 0;
 		this.nestAlarm = 0;
 		this.hiveId = 0;
 		this.incomeLog = [];
@@ -449,6 +451,7 @@ export class Sim {
 				pop: 2
 			}
 		];
+		this.seedHomeEconomy();
 		this.make("node", "none", SITES.berries.x, SITES.berries.y, {
 			r: 22,
 			hp: 40,
@@ -458,21 +461,12 @@ export class Sim {
 			draw: 36,
 			site: "berries",
 		});
-		this.make("fruit", "none", NEST_POS.x + 190, NEST_POS.y - 40, {
-			r: 20,
-			hp: 40,
-			maxHp: 40,
-			speed: 0,
-			meat: this.yieldAmt(20),
-			draw: 92,
-			site: "berries",
-		});
-		this.make("fruit", "none", NEST_POS.x + 340, NEST_POS.y - 180, {
+		this.make("fruit", "none", NEST_POS.x + 360, NEST_POS.y - 200, {
 			r: 20,
 			hp: 36,
 			maxHp: 36,
 			speed: 0,
-			meat: this.yieldAmt(14),
+			meat: this.yieldAmt(18),
 			draw: 84,
 			site: "berries",
 		});
@@ -484,18 +478,6 @@ export class Sim {
 			meat: this.yieldAmt(16),
 			draw: 90,
 			site: "berries",
-		});
-		this.make("solar", "none", 900, 980, {
-			r: 16,
-			hp: 30,
-			maxHp: 30,
-			speed: 0,
-			meat: 0,
-			haul: this.yieldAmt(14),
-			draw: 42,
-			unearthed: false,
-			buried: 0.45,
-			site: "unique",
 		});
 		this.make("solar", "none", 1760, 1380, {
 			r: 16,
@@ -581,8 +563,56 @@ export class Sim {
 		this.clampCamera();
 		this.mode = "playing";
 		this.selectOnly(queen.id);
-		this.note("Queen is selected. Harvest the fruit to the east — 3 food lays a worker. Watch net food.");
+		this.note("Grove and scrap sit inside the silk. Harvest, raise a tower, then march when the hollow cannot feed more.");
 		this.audio?.wave();
+	}
+	seedHomeEconomy() {
+		const n = NEST_POS;
+		const fruits: [number, number, number, number][] = [
+			[n.x + 200, n.y - 28, 40, 96],
+			[n.x + 55, n.y - 195, 36, 88],
+			[n.x + 175, n.y + 125, 32, 84],
+		];
+		for (const [x, y, meat, draw] of fruits) {
+			this.make("fruit", "none", x, y, {
+				r: 22,
+				hp: meat,
+				maxHp: meat,
+				speed: 0,
+				meat: this.yieldAmt(meat),
+				draw,
+				site: "home",
+			});
+		}
+		const scraps: [number, number, number, number][] = [
+			[n.x - 200, n.y + 24, 28, 32],
+			[n.x - 80, n.y + 185, 22, 30],
+		];
+		for (const [x, y, haul, draw] of scraps) {
+			this.make("scrap", "none", x, y, {
+				r: 16,
+				hp: haul,
+				maxHp: haul,
+				speed: 0,
+				meat: 0,
+				haul: this.yieldAmt(haul),
+				draw,
+				unearthed: true,
+				site: "home",
+			});
+		}
+		this.make("solar", "none", n.x - 210, n.y - 95, {
+			r: 16,
+			hp: 22,
+			maxHp: 22,
+			speed: 0,
+			meat: 0,
+			haul: this.yieldAmt(18),
+			draw: 42,
+			unearthed: true,
+			buried: 0,
+			site: "home",
+		});
 	}
 	seedHive(id: string) {
 		const s = this.sites.find((x) => x.id === id);
@@ -1122,6 +1152,19 @@ export class Sim {
 	workerPath(id: number) {
 		return this.routes.get(id);
 	}
+	tickHomeRegen(dt: number) {
+		this.homeRegen += dt;
+		if (this.homeRegen < 6.5) return;
+		this.homeRegen = 0;
+		for (const e of this.ents) {
+			if (!e.alive || e.site !== "home") continue;
+			if (e.kind === "fruit" || e.kind === "node") {
+				if (e.meat < e.maxHp) e.meat = Math.min(e.maxHp, e.meat + this.yieldAmt(3));
+			} else if (e.kind === "scrap" || e.kind === "solar") {
+				if (e.haul < e.maxHp) e.haul = Math.min(e.maxHp, e.haul + this.yieldAmt(2));
+			}
+		}
+	}
 	tickDrops(dt: number) {
 		this.dropTick += dt;
 		if (this.dropTick < this.tune().dropEvery) return;
@@ -1254,6 +1297,7 @@ export class Sim {
 		this.venomCd = Math.max(0, this.venomCd - dt);
 		this.nestAlarm = Math.max(0, this.nestAlarm - dt);
 		this.tickDrops(dt);
+		this.tickHomeRegen(dt);
 		this.unearth();
 		this.zapElectric(dt);
 		this.trauma = Math.max(0, this.trauma - dt * 1.6);
@@ -2706,7 +2750,7 @@ export class Sim {
 			q.haul += take;
 			this.pop(o.x, o.y - 20, food ? `+${take}f` : `+${take}m`, food ? "#b7c96a" : "#e8ebe4");
 			this.audio?.deposit();
-			if (o.meat <= 0 && o.haul <= 0 && o.site !== "unique") o.alive = false;
+			if (o.meat <= 0 && o.haul <= 0 && o.site !== "unique" && o.site !== "home") o.alive = false;
 			break;
 		}
 	}
@@ -2964,6 +3008,7 @@ export class Sim {
 		}
 		e.targetId = 0;
 		const empty = node.meat <= 0 && node.haul <= 0;
+		if (empty && node.site === "home") return;
 		if (empty && node.site === "unique") {
 			node.buried = Math.max(node.buried, 0.8);
 			node.meat = 0;

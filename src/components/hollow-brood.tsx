@@ -465,7 +465,7 @@ function TitleOverlay({
             Hollow Brood
           </h1>
           <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted sm:text-base">
-            Walk the queen into the fruit tree, or tap Harvest on her card. Toggle units below, then pick a duty.
+            Fruit and scrap sit inside the silk. Harvest, raise towers, hold the hollow. When the grove cannot feed the brood, march — evos, wings, and swarms wait past the perimeter.
           </p>
         </header>
         <div className="grid grid-cols-3 gap-3">

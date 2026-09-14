@@ -15,6 +15,21 @@ export const SILK_STAND = 78;
 export const SILK_COST = 2;
 export const HARVEST_R = 170;
 
+/** Per-second food drain. Difficulty multiplies the total. */
+export const UPKEEP_RATES = {
+  nest: 0.15,
+  queen: 0.4,
+  teen: 0.2,
+  worker: 0.07,
+  harvester: 0.09,
+  builder: 0.09,
+  defender: 0.2,
+  attacker: 0.26,
+  tank: 0.48,
+  siege: 0.42,
+  air: 0.12,
+} as const;
+
 export const SITES = {
   meadow: { x: 2140, y: 720, r: 180 },
   bee: { x: 2860, y: 520, r: 150 },
@@ -98,6 +113,8 @@ export type DifficultyTune = {
   blurb: string;
   food: number;
   material: number;
+  foodCap: number;
+  matCap: number;
   nestHp: number;
   queenHp: number;
   enemyHp: number;
@@ -105,6 +122,11 @@ export type DifficultyTune = {
   hatch: number;
   upkeepMul: number;
   broodCap: number;
+  yieldMul: number;
+  costMul: number;
+  dropEvery: number;
+  gather: number;
+  silkCost: number;
 };
 
 export const DIFFICULTIES: Record<Difficulty, DifficultyTune> = {
@@ -112,22 +134,31 @@ export const DIFFICULTIES: Record<Difficulty, DifficultyTune> = {
     id: "easy",
     label: "Easy",
     blurb: "Fat larders, sleepy hives, cheap silk.",
-    food: 80,
-    material: 40,
+    food: 48,
+    material: 22,
+    foodCap: 96,
+    matCap: 48,
     nestHp: 640,
     queenHp: 360,
     enemyHp: 0.78,
     enemySpd: 0.86,
     hatch: 6,
-    upkeepMul: 0.7,
-    broodCap: 10,
+    upkeepMul: 0.72,
+    broodCap: 12,
+    yieldMul: 1.25,
+    costMul: 0.85,
+    dropEvery: 24,
+    gather: 6,
+    silkCost: 1,
   },
   standard: {
     id: "standard",
     label: "Standard",
     blurb: "The hollow as an empire, not a raid.",
-    food: 54,
-    material: 24,
+    food: 36,
+    material: 16,
+    foodCap: 72,
+    matCap: 36,
     nestHp: 480,
     queenHp: 280,
     enemyHp: 1,
@@ -135,20 +166,32 @@ export const DIFFICULTIES: Record<Difficulty, DifficultyTune> = {
     hatch: 8,
     upkeepMul: 1,
     broodCap: 8,
+    yieldMul: 1,
+    costMul: 1,
+    dropEvery: 30,
+    gather: 5,
+    silkCost: 2,
   },
   difficult: {
     id: "difficult",
     label: "Difficult",
     blurb: "Thin stores. Far hives wake hungry.",
-    food: 32,
-    material: 14,
+    food: 22,
+    material: 10,
+    foodCap: 56,
+    matCap: 28,
     nestHp: 380,
     queenHp: 220,
     enemyHp: 1.28,
     enemySpd: 1.1,
     hatch: 10,
-    upkeepMul: 1.2,
-    broodCap: 7,
+    upkeepMul: 1.28,
+    broodCap: 6,
+    yieldMul: 0.8,
+    costMul: 1.15,
+    dropEvery: 36,
+    gather: 4,
+    silkCost: 3,
   },
 };
 
@@ -293,6 +336,8 @@ export type HudSnap = {
   material: number;
   matCap: number;
   upkeep: number;
+  income: number;
+  net: number;
   hibernating: number;
   workers: number;
   attackers: number;

@@ -3,11 +3,11 @@ import {
   DIFFICULTIES,
   NEST_PERIM,
   NEST_POS,
-  SILK_COST,
   SILK_LINK_RANGE,
   SILK_STAND,
   SITES,
   TOWER_PERIM,
+  UPKEEP_RATES,
   WALK_MARGIN,
   WORLD_H,
   WORLD_W,
@@ -158,6 +158,8 @@ export class Sim {
 	dropCount = 0;
 	nestAlarm = 0;
 	hiveId = 0;
+	incomeLog: { t: number; f: number; m: number }[] = [];
+	fullNote = 0;
 	constructor() {
 		const save = loadSave();
 		this.bestReach = save.bestReach;
@@ -166,6 +168,57 @@ export class Sim {
 	}
 	tune() {
 		return DIFFICULTIES[this.difficulty];
+	}
+	silkCost() {
+		return this.tune().silkCost;
+	}
+	yieldAmt(base: number) {
+		return Math.max(1, Math.round(base * this.tune().yieldMul));
+	}
+	foodPrice(base: number) {
+		return Math.max(1, Math.round(base * this.tune().costMul));
+	}
+	matPrice(base: number) {
+		return Math.max(1, Math.round(base * this.tune().costMul));
+	}
+	gainFood(n: number) {
+		if (n <= 0) return 0;
+		const room = Math.min(n, Math.max(0, this.cap("food") - this.food));
+		this.food += room;
+		if (room > 0) this.incomeLog.push({ t: this.time, f: room, m: 0 });
+		if (room < n && this.time - this.fullNote > 6) {
+			this.fullNote = this.time;
+			this.note("Larder is full. Expand the food chamber below.");
+		}
+		return room;
+	}
+	gainMat(n: number) {
+		if (n <= 0) return 0;
+		const room = Math.min(n, Math.max(0, this.cap("material") - this.material));
+		this.material += room;
+		if (room > 0) this.incomeLog.push({ t: this.time, f: 0, m: room });
+		if (room < n && this.time - this.fullNote > 6) {
+			this.fullNote = this.time;
+			this.note("Material bins are full. Expand them below.");
+		}
+		return room;
+	}
+	spendFood(n: number) {
+		if (this.food < n) return false;
+		this.food -= n;
+		return true;
+	}
+	spendMat(n: number) {
+		if (this.material < n) return false;
+		this.material -= n;
+		return true;
+	}
+	incomeRate() {
+		const from = this.time - 8;
+		this.incomeLog = this.incomeLog.filter((e) => e.t > from);
+		if (this.time < 1) return 0;
+		const span = Math.min(8, Math.max(1, this.time));
+		return this.incomeLog.reduce((s, e) => s + e.f, 0) / span;
 	}
 	make(kind: Kind, faction: Faction, x: number, y: number, extra: Partial<Ent> = {}) {
 		const e: Ent = {
@@ -265,6 +318,8 @@ export class Sim {
 		this.dropCount = 0;
 		this.nestAlarm = 0;
 		this.hiveId = 0;
+		this.incomeLog = [];
+		this.fullNote = 0;
 		this.fog.reset();
 		this.nav.clear();
 		this.routes.clear();
@@ -287,13 +342,13 @@ export class Sim {
 			{
 				type: "food",
 				level: 1,
-				cap: 80,
+				cap: t.foodCap,
 				stored: t.food
 			},
 			{
 				type: "material",
 				level: 1,
-				cap: 40,
+				cap: t.matCap,
 				stored: t.material
 			},
 			{
@@ -398,16 +453,16 @@ export class Sim {
 			hp: 40,
 			maxHp: 40,
 			speed: 0,
-			meat: 18,
+			meat: this.yieldAmt(16),
 			draw: 36,
-			site: "berries"
+			site: "berries",
 		});
 		this.make("fruit", "none", NEST_POS.x + 190, NEST_POS.y - 40, {
 			r: 20,
 			hp: 40,
 			maxHp: 40,
 			speed: 0,
-			meat: 24,
+			meat: this.yieldAmt(20),
 			draw: 92,
 			site: "berries",
 		});
@@ -416,7 +471,7 @@ export class Sim {
 			hp: 36,
 			maxHp: 36,
 			speed: 0,
-			meat: 18,
+			meat: this.yieldAmt(14),
 			draw: 84,
 			site: "berries",
 		});
@@ -425,7 +480,7 @@ export class Sim {
 			hp: 40,
 			maxHp: 40,
 			speed: 0,
-			meat: 20,
+			meat: this.yieldAmt(16),
 			draw: 90,
 			site: "berries",
 		});
@@ -435,7 +490,7 @@ export class Sim {
 			maxHp: 30,
 			speed: 0,
 			meat: 0,
-			haul: 16,
+			haul: this.yieldAmt(14),
 			draw: 42,
 			unearthed: false,
 			buried: 0.45,
@@ -447,7 +502,7 @@ export class Sim {
 			maxHp: 30,
 			speed: 0,
 			meat: 0,
-			haul: 14,
+			haul: this.yieldAmt(12),
 			draw: 40,
 			buried: 0.4,
 			site: "unique",
@@ -457,7 +512,7 @@ export class Sim {
 			hp: 24,
 			maxHp: 24,
 			speed: 0,
-			meat: 12,
+			meat: this.yieldAmt(10),
 			haul: 0,
 			draw: 34,
 			buried: 0.5,
@@ -468,22 +523,22 @@ export class Sim {
 			hp: 24,
 			maxHp: 24,
 			speed: 0,
-			meat: 10,
+			meat: this.yieldAmt(8),
 			haul: 0,
 			draw: 34,
 			buried: 0.35,
 			site: "unique",
 		});
 		for (const [x, y, meat] of [
-			[1480, 1280, 10],
-			[SITES.meadow.x, SITES.meadow.y, 16],
+			[1480, 1280, 8],
+			[SITES.meadow.x, SITES.meadow.y, 14],
 		] as const) {
 			this.make("node", "none", x, y, {
 				r: 18,
 				hp: 28,
 				maxHp: 28,
 				speed: 0,
-				meat,
+				meat: this.yieldAmt(meat),
 				draw: 30,
 				site: "berries",
 			});
@@ -525,7 +580,7 @@ export class Sim {
 		this.clampCamera();
 		this.mode = "playing";
 		this.selectOnly(queen.id);
-		this.note("Queen is selected. Harvest the fruit tree to the east — or lay a worker for 3 food.");
+		this.note("Queen is selected. Harvest the fruit to the east — 3 food lays a worker. Watch net food.");
 		this.audio?.wave();
 	}
 	seedHive(id: string) {
@@ -723,34 +778,54 @@ export class Sim {
 		return this.ents.filter((e) => e.alive && e.caste === c && e.kind !== "egg").length;
 	}
 	upkeep() {
-		let u = .4;
+		let u = UPKEEP_RATES.nest;
 		for (const e of this.ents) {
-			if (!e.alive || e.faction !== "spider") continue;
-			if (e.kind === "queen" && e.stage === "adult") u += .7;
-			else if (e.kind === "queen") u += .35;
-			else if (e.caste === "worker") u += .12;
-			else if (e.evo === "tank") u += .7;
-			else if (e.evo === "siege") u += .55;
-			else if (e.winged) u += .22;
-			else if (e.caste === "defender") u += .38;
-			else if (e.caste === "attacker") u += .32;
+			if (!e.alive || e.faction !== "spider" || e.hibernating) continue;
+			if (e.kind === "queen" && e.stage === "adult") u += UPKEEP_RATES.queen;
+			else if (e.kind === "queen") u += UPKEEP_RATES.teen;
+			else if (e.caste === "worker") {
+				u += e.evo === "harvester" ? UPKEEP_RATES.harvester : e.evo === "builder" ? UPKEEP_RATES.builder : UPKEEP_RATES.worker;
+			} else if (e.evo === "tank") u += UPKEEP_RATES.tank;
+			else if (e.evo === "siege") u += UPKEEP_RATES.siege;
+			else if (e.caste === "defender") u += UPKEEP_RATES.defender;
+			else if (e.caste === "attacker") u += UPKEEP_RATES.attacker;
+			if (e.winged) u += UPKEEP_RATES.air;
 		}
 		return u * this.tune().upkeepMul;
+	}
+	unitUpkeep(e: Ent) {
+		if (e.kind === "queen" && e.stage === "adult") return UPKEEP_RATES.queen;
+		if (e.kind === "queen") return UPKEEP_RATES.teen;
+		if (e.caste === "worker") return e.evo === "harvester" ? UPKEEP_RATES.harvester : e.evo === "builder" ? UPKEEP_RATES.builder : UPKEEP_RATES.worker;
+		if (e.evo === "tank") return UPKEEP_RATES.tank + (e.winged ? UPKEEP_RATES.air : 0);
+		if (e.evo === "siege") return UPKEEP_RATES.siege + (e.winged ? UPKEEP_RATES.air : 0);
+		if (e.caste === "defender") return UPKEEP_RATES.defender + (e.winged ? UPKEEP_RATES.air : 0);
+		if (e.caste === "attacker") return UPKEEP_RATES.attacker + (e.winged ? UPKEEP_RATES.air : 0);
+		return 0.1;
 	}
 	workerCost() {
 		return 3;
 	}
 	attackCost() {
-		return 8 + this.casteCount("attacker");
+		return this.foodPrice(8 + this.casteCount("attacker") * 2);
 	}
 	defendCost() {
-		return 5;
+		return this.foodPrice(6);
 	}
 	queenCost() {
-		return 28 + this.ents.filter((e) => e.alive && e.kind === "queen").length * 16;
+		return this.foodPrice(24 + this.ents.filter((e) => e.alive && e.kind === "queen").length * 12);
 	}
 	towerCost() {
-		return 12 + this.ents.filter((e) => e.alive && e.kind === "tower").length * 6;
+		return this.matPrice(10 + this.ents.filter((e) => e.alive && e.kind === "tower").length * 5);
+	}
+	electricCost() {
+		return this.matPrice(12);
+	}
+	siegeholdCost() {
+		return this.matPrice(16);
+	}
+	roomCost(level: number) {
+		return this.matPrice(8 + level * 6);
 	}
 	note(text: string) {
 		this.tickers.unshift({
@@ -863,7 +938,7 @@ export class Sim {
 			anchor: undefined as { x: number; y: number; id: number } | undefined,
 			standOk: false,
 			reachOk: false,
-			costOk: this.material >= SILK_COST,
+			costOk: this.material >= this.silkCost(),
 			ready: false,
 			dist: 0,
 			hint: "",
@@ -904,20 +979,20 @@ export class Sim {
 		let hint = "Mute tower. Stand on the post to splice silk.";
 		if (!standOk) hint = "Move onto the mute tower. Silk splices at the post, not from range.";
 		else if (!reachOk) hint = `Too far from the net. Need a live node within ${SILK_LINK_RANGE} paces.`;
-		else if (this.material < SILK_COST) hint = `Need ${SILK_COST} material to spin the strand.`;
+		else if (this.material < this.silkCost()) hint = `Need ${this.silkCost()} material to spin the strand.`;
 		else {
 			const toNest = this.nest()?.id === anchor!.id;
 			hint = toNest
-				? `Silk ready · ${SILK_COST} mat. Q splices this tower to the hollow — defenders will hear it.`
-				: `Silk ready · ${SILK_COST} mat. Q knits into the tower net — air will answer this ring.`;
+				? `Silk ready · ${this.silkCost()} mat. Q splices this tower to the hollow — defenders will hear it.`
+				: `Silk ready · ${this.silkCost()} mat. Q knits into the tower net — air will answer this ring.`;
 		}
 		return {
 			tower,
 			anchor,
 			standOk,
 			reachOk,
-			costOk: this.material >= SILK_COST,
-			ready: standOk && reachOk && this.material >= SILK_COST,
+			costOk: this.material >= this.silkCost(),
+			ready: standOk && reachOk && this.material >= this.silkCost(),
 			dist,
 			hint,
 		};
@@ -1044,7 +1119,7 @@ export class Sim {
 	}
 	tickDrops(dt: number) {
 		this.dropTick += dt;
-		if (this.dropTick < 30) return;
+		if (this.dropTick < this.tune().dropEvery) return;
 		this.dropTick = 0;
 		this.dropCount += 1;
 		const foodFrac = this.cap("food") ? this.food / this.cap("food") : 1;
@@ -1053,10 +1128,10 @@ export class Sim {
 		const x = 180 + Math.random() * (WORLD_W - 360);
 		const y = 180 + Math.random() * (WORLD_H - 360);
 		if (wantFood) {
-			this.make("fruit", "none", x, y, { r: 16, hp: 24, maxHp: 24, speed: 0, meat: 10, draw: 64 });
+			this.make("fruit", "none", x, y, { r: 16, hp: 24, maxHp: 24, speed: 0, meat: this.yieldAmt(8), draw: 64 });
 			this.pop(x, y, "Forage", "#b7c96a");
 		} else {
-			this.make("scrap", "none", x, y, { r: 14, hp: 20, maxHp: 20, speed: 0, meat: 0, haul: 8, draw: 28 });
+			this.make("scrap", "none", x, y, { r: 14, hp: 20, maxHp: 20, speed: 0, meat: 0, haul: this.yieldAmt(6), draw: 28 });
 			this.pop(x, y, "Scrap", "#c9d0c4");
 		}
 		this.note(wantFood ? "Fresh forage fell in the woods." : "Scrap broke the soil.");
@@ -1328,8 +1403,8 @@ export class Sim {
 			if (this.ents.filter((e) => e.alive && e.site === s.id && (e.kind === "bee" || e.kind === "wasp" || e.kind === "scorpion" || e.kind === "egg" && e.faction !== "spider" || e.kind === "hive")).length === 0 && Math.hypot(q.x - s.x, q.y - s.y) < s.r) {
 				s.cleared = true;
 				this.note("The hollow is scoured. Lay a tower and an adolescent queen to hold it.");
-				this.food = Math.min(this.cap("food"), this.food + 12);
-				this.material = Math.min(this.cap("material"), this.material + 10);
+				this.gainFood(this.yieldAmt(14));
+				this.gainMat(this.yieldAmt(10));
 			}
 		}
 	}
@@ -1340,19 +1415,24 @@ export class Sim {
 		const need = this.upkeep();
 		if (this.food >= need) {
 			this.food -= need;
-			for (const e of this.ents) if (e.hibernating && e.faction === "spider") e.hibernating = false;
+			const sleepers = this.ents.filter((e) => e.alive && e.hibernating && e.faction === "spider");
+			sleepers.sort((a, b) => this.unitUpkeep(a) - this.unitUpkeep(b));
+			if (sleepers[0] && this.food > need * 4) {
+				sleepers[0].hibernating = false;
+				if (sleepers[0].job === "hibernate") sleepers[0].job = sleepers[0].caste === "worker" ? "none" : "rove";
+			}
 		} else {
-			this.food = Math.max(0, this.food - need * .25);
+			this.food = Math.max(0, this.food - need * 0.2);
 			const extras = this.ents.filter((e) => e.alive && e.faction === "spider" && e.kind === "brood" && !e.hibernating && e.caste !== "worker");
-			extras.sort((a, b) => b.maxHp - a.maxHp);
-			let n = 0;
-			for (const e of extras) {
-				if (n > 2) break;
+			extras.sort((a, b) => this.unitUpkeep(b) - this.unitUpkeep(a));
+			const e = extras[0];
+			if (e) {
 				e.hibernating = true;
 				e.job = "hibernate";
-				n++;
+				this.note("Stores run thin. The hungriest brood sleeps in the hollow.");
+			} else if (this.food < need * 3) {
+				this.note("Larder is thin. Harvest, or the army will starve into sleep.");
 			}
-			if (n) this.note("Stores run thin. Brood returns to the hollow to sleep.");
 		}
 		for (const e of this.ents) if (e.caste === "worker" && e.job !== "hibernate") e.foodMeter = Math.max(0, e.foodMeter - (e.evoSpd > 0 ? .35 : .55));
 	}
@@ -1406,11 +1486,10 @@ export class Sim {
 			return;
 		}
 		const cost = kind === "worker" ? this.workerCost() : kind === "attacker" ? this.attackCost() : kind === "defender" ? this.defendCost() : this.queenCost();
-		if (this.food < cost) {
+		if (!this.spendFood(cost)) {
 			this.note(kind === "worker" ? "Need 3 food for a worker egg." : "Not enough food.");
 			return;
 		}
-		this.food -= cost;
 		const hatch = this.room("hatchery");
 		if (hatch) hatch.stored += 1;
 		this.make("egg", "spider", n.x + (Math.random() - .5) * 50, n.y + 30 + (Math.random() - .5) * 40, {
@@ -1432,11 +1511,10 @@ export class Sim {
 			return;
 		}
 		const cost = this.towerCost();
-		if (this.material < cost) {
+		if (!this.spendMat(cost)) {
 			this.note(`Need ${cost} material. Only builders spend material.`);
 			return;
 		}
-		this.material -= cost;
 		const facing = b.facing || 0;
 		this.make("tower", "spider", b.x + Math.cos(facing) * 46, b.y + Math.sin(facing) * 46, {
 			r: 18,
@@ -1481,7 +1559,7 @@ export class Sim {
 	spliceSilk(tower: Ent, anchor: { id: number; x: number; y: number }, who: "queen" | "teen") {
 		if (!tower.alive || tower.kind !== "tower" || tower.linked) return;
 		if (this.links.some((l) => (l.a === tower.id && l.b === anchor.id) || (l.b === tower.id && l.a === anchor.id))) return;
-		if (who === "queen") this.material = Math.max(0, this.material - SILK_COST);
+		if (who === "queen") this.spendMat(this.silkCost());
 		tower.linked = true;
 		this.links.push({ a: anchor.id, b: tower.id });
 		const toNest = this.nest()?.id === anchor.id;
@@ -1748,8 +1826,8 @@ export class Sim {
 			this.note("The chrysalis needs more stores.");
 			return;
 		}
-		this.food -= opt.costF;
-		this.material -= opt.costM;
+		this.spendFood(opt.costF);
+		this.spendMat(opt.costM);
 		if (e.kind === "queen") {
 			e.evo = evo;
 			if (evo === "air") {
@@ -1834,9 +1912,9 @@ export class Sim {
 	evoFor(e: Ent) {
 		if (e.kind === "queen" && e.stage === "adult") {
 			const out = [];
-			if (e.evoBite < 2) out.push({ id: "melee", label: "Fangs", costF: 8, costM: 0 });
-			if (e.evoHp < 2) out.push({ id: "tank", label: "Carapace", costF: 10, costM: 0 });
-			if (!e.winged) out.push({ id: "air", label: "Wings", costF: 12, costM: 0 });
+			if (e.evoBite < 2) out.push({ id: "melee", label: "Fangs", costF: this.foodPrice(8), costM: 0 });
+			if (e.evoHp < 2) out.push({ id: "tank", label: "Carapace", costF: this.foodPrice(10), costM: 0 });
+			if (!e.winged) out.push({ id: "air", label: "Wings", costF: this.foodPrice(12), costM: 0 });
 			return out;
 		}
 		if (e.caste === "worker") {
@@ -1856,7 +1934,7 @@ export class Sim {
 			if (!e.winged) out.push({
 				id: "air",
 				label: "Wings",
-				costF: 8,
+				costF: this.foodPrice(6),
 				costM: 0
 			});
 			return out;
@@ -1865,37 +1943,37 @@ export class Sim {
 		if (e.evo === "biter" || e.evo === "melee") out.push({
 			id: "melee",
 			label: "Melee fangs",
-			costF: 8,
+			costF: this.foodPrice(8),
 			costM: 0
 		});
 		if (e.caste === "defender" && e.evo !== "tank") out.push({
 			id: "tank",
 			label: "Tank",
-			costF: 10,
+			costF: this.foodPrice(10),
 			costM: 0
 		});
 		if (e.caste === "attacker" && e.evo !== "siege") out.push({
 			id: "siege",
 			label: "Siege",
-			costF: 10,
+			costF: this.foodPrice(10),
 			costM: 0
 		});
 		if (e.caste === "attacker" && !e.winged) out.push({
 			id: "air",
 			label: "Wings",
-			costF: 10,
+			costF: this.foodPrice(10),
 			costM: 0
 		});
 		if (e.evo === "tank") out.push({
 			id: "tank",
 			label: "Armor / splash",
-			costF: 8,
+			costF: this.foodPrice(8),
 			costM: 0
 		});
 		if (e.evo === "siege" || e.winged && e.caste === "attacker") out.push({
 			id: "siege",
 			label: "Heavy / sniper",
-			costF: 10,
+			costF: this.foodPrice(10),
 			costM: 0
 		});
 		return out;
@@ -1954,8 +2032,8 @@ export class Sim {
 		}
 		if (e.kind === "tower") {
 			const live = this.silkPowered(e.id);
-			const costE = 14;
-			const costS = 18;
+			const costE = this.electricCost();
+			const costS = this.siegeholdCost();
 			const skill = this.bestBuilderSkill();
 			out: {
 				const out: CommandOpt[] = [
@@ -2143,11 +2221,11 @@ export class Sim {
 			return;
 		}
 		if (evo === "electric") {
-			if (this.material < 14) {
-				this.note("Need 14 material.");
+			const cost = this.electricCost();
+			if (!this.spendMat(cost)) {
+				this.note(`Need ${cost} material.`);
 				return;
 			}
-			this.material -= 14;
 			e.evo = "electric";
 			e.maxHp += 90;
 			e.hp += 90;
@@ -2165,11 +2243,11 @@ export class Sim {
 				this.note("A builder must reach skill 3.");
 				return;
 			}
-			if (this.material < 18) {
-				this.note("Need 18 material.");
+			const cost = this.siegeholdCost();
+			if (!this.spendMat(cost)) {
+				this.note(`Need ${cost} material.`);
 				return;
 			}
-			this.material -= 18;
 			e.evo = "siegehold";
 			e.maxHp += 40;
 			this.note("Siege nest ready. Assign an attacker to the post.");
@@ -2215,18 +2293,17 @@ export class Sim {
 	}
 	seedHiveLoot(h: Ent) {
 		if (this.ents.some((e) => e.alive && e.kind === "loot" && e.site === h.site)) return;
-		this.make("loot", "none", h.x - 18, h.y + 8, { r: 12, hp: 20, maxHp: 20, speed: 0, meat: 16, draw: 26, site: h.site });
-		this.make("loot", "none", h.x + 22, h.y - 6, { r: 12, hp: 20, maxHp: 20, speed: 0, meat: 0, haul: 10, draw: 26, site: h.site, role: "pack" });
+		this.make("loot", "none", h.x - 18, h.y + 8, { r: 12, hp: 20, maxHp: 20, speed: 0, meat: this.yieldAmt(14), draw: 26, site: h.site });
+		this.make("loot", "none", h.x + 22, h.y - 6, { r: 12, hp: 20, maxHp: 20, speed: 0, meat: 0, haul: this.yieldAmt(10), draw: 26, site: h.site, role: "pack" });
 	}
 	expandRoom(type: RoomType) {
 		const r = this.room(type);
 		if (!r) return;
-		const cost = 10 + r.level * 8;
-		if (this.material < cost) {
-			this.note("Builders need more material.");
+		const cost = this.roomCost(r.level);
+		if (!this.spendMat(cost)) {
+			this.note(`Builders need ${cost} material.`);
 			return;
 		}
-		this.material -= cost;
 		r.level += 1;
 		r.cap = Math.round(r.cap * 1.35);
 		this.note(`${type} chamber grows.`);
@@ -2424,15 +2501,15 @@ export class Sim {
 			if ((o.meat || 0) <= 0 && (o.haul || 0) <= 0) continue;
 			if (Math.hypot(q.x - o.x, q.y - o.y) > q.r + o.r + 18) continue;
 			const food = o.meat > 0;
-			const take = Math.min(8, food ? o.meat : o.haul || 4);
+			const take = Math.min(this.tune().gather, food ? o.meat : o.haul || 4);
 			if (food) {
 				o.meat -= take;
-				this.food = Math.min(this.cap("food"), this.food + take);
-				this.pop(o.x, o.y - 20, `+${take}f`, "#b7c96a");
+				const got = this.gainFood(take);
+				this.pop(o.x, o.y - 20, `+${got}f`, "#b7c96a");
 			} else {
 				o.haul = Math.max(0, o.haul - take);
-				this.material = Math.min(this.cap("material"), this.material + take);
-				this.pop(o.x, o.y - 20, `+${take}m`, "#e8ebe4");
+				const got = this.gainMat(take);
+				this.pop(o.x, o.y - 20, `+${got}m`, "#e8ebe4");
 			}
 			this.audio?.deposit();
 			if (o.meat <= 0 && o.haul <= 0 && o.site !== "unique") o.alive = false;
@@ -2574,8 +2651,8 @@ export class Sim {
 		if (e.haul > 0) {
 			this.routeTo(e, n.x, n.y, dt);
 			if (Math.hypot(e.x - n.x, e.y - n.y) < 70) {
-				if (e.meat > 0) this.food = Math.min(this.cap("food"), this.food + e.haul);
-				else this.material = Math.min(this.cap("material"), this.material + e.haul);
+				if (e.meat > 0) this.gainFood(e.haul);
+				else this.gainMat(e.haul);
 				this.pop(n.x, n.y - 30, `+${e.haul}`, "#e8ebe4");
 				e.haul = 0;
 				e.targetId = 0;
@@ -2652,7 +2729,7 @@ export class Sim {
 	}
 	takeYield(e: Ent, node: Ent) {
 		const store = node.meat > 0 ? node.meat : node.haul;
-		const take = Math.min(6, store || 4);
+		const take = Math.min(this.tune().gather, store || 4);
 		if (node.meat > 0) {
 			node.meat -= take;
 			e.haul = take + (e.transCap > 0 ? 4 : 0);
@@ -2887,8 +2964,8 @@ export class Sim {
 		for (const e of this.ents) {
 			if (!e.alive || e.kind !== "pickup" && e.kind !== "cocoon") continue;
 			if (q && Math.hypot(q.x - e.x, q.y - e.y) < q.r + e.r + 8) {
-				this.food = Math.min(this.cap("food"), this.food + e.meat);
-				this.material = Math.min(this.cap("material"), this.material + Math.max(1, Math.floor(e.meat / 3)));
+				this.gainFood(this.yieldAmt(e.meat));
+				this.gainMat(this.yieldAmt(Math.max(1, Math.floor(e.meat / 3))));
 				e.alive = false;
 				this.pop(e.x, e.y, `+${e.meat}`, "#e8ebe4");
 				this.audio?.deposit();
@@ -2992,6 +3069,8 @@ export class Sim {
 			material: Math.floor(this.material),
 			matCap: this.cap("material"),
 			upkeep: Math.round(this.upkeep() * 10) / 10,
+			income: Math.round(this.incomeRate() * 10) / 10,
+			net: Math.round((this.incomeRate() - this.upkeep()) * 10) / 10,
 			hibernating: this.ents.filter((e) => e.alive && e.hibernating).length,
 			workers: this.casteCount("worker"),
 			attackers: this.casteCount("attacker"),
@@ -3030,7 +3109,7 @@ export class Sim {
 			silkNodes: this.linkedNodes().length,
 			silkDist: Math.round(silk.dist),
 			silkMax: SILK_LINK_RANGE,
-			silkCost: SILK_COST,
+			silkCost: this.silkCost(),
 			ally: sel ? {
 				id: sel.id,
 				kind: sel.kind,

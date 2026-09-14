@@ -18,11 +18,13 @@ function emptyHud(): HudSnap {
     queenMax: 280,
     nestHp: 480,
     nestMax: 480,
-    food: 54,
-    foodCap: 80,
-    material: 24,
-    matCap: 40,
-    upkeep: 1,
+    food: 36,
+    foodCap: 72,
+    material: 16,
+    matCap: 36,
+    upkeep: 0.6,
+    income: 0,
+    net: 0,
     hibernating: 0,
     workers: 0,
     attackers: 0,
@@ -527,6 +529,10 @@ function Hud({
             <span className="text-sm font-medium tabular-nums">
               {hud.food}/{hud.foodCap}
             </span>
+            <span className={cn("text-xs tabular-nums", hud.net < 0 ? "text-danger" : "text-muted")}>
+              {hud.net >= 0 ? "+" : ""}
+              {hud.net.toFixed(1)}/s
+            </span>
             <span className="h-3.5 w-px bg-border" />
             <span className="text-xs text-muted">Mat</span>
             <span className="text-sm font-medium tabular-nums">
@@ -534,7 +540,7 @@ function Hud({
             </span>
             <span className="h-3.5 w-px bg-border" />
             <span className="text-xs text-muted">Upkeep</span>
-            <span className="text-sm tabular-nums">{hud.upkeep}/s</span>
+            <span className="text-sm tabular-nums">{hud.upkeep.toFixed(1)}/s</span>
           </div>
           <div className="flex flex-wrap items-center gap-x-3 rounded-lg border border-border bg-surface/90 px-3 py-1.5 text-xs tabular-nums text-muted">
             <Hammer className="size-3" /> {hud.workers}

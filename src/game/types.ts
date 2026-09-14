@@ -68,7 +68,7 @@ export type Kind =
   | "loot";
 
 export type Caste = "worker" | "attacker" | "defender" | "queen" | "none";
-export type Job = "none" | "harvest" | "build" | "guard" | "rove" | "follow" | "hibernate" | "haul" | "hold";
+export type Job = "none" | "harvest" | "forage" | "scavenge" | "build" | "guard" | "rove" | "follow" | "hibernate" | "haul" | "hold";
 export type Evo =
   | "biter"
   | "melee"
@@ -321,6 +321,17 @@ export type UnitSnap = {
   foodMax: number;
 };
 
+export type UnitGroup = {
+  key: string;
+  label: string;
+  caste: Caste;
+  evo: Evo;
+  winged: boolean;
+  count: number;
+  selected: number;
+  job: Job;
+};
+
 export type AllySnap = {
   id: number;
   kind: Kind;
@@ -395,6 +406,7 @@ export type HudSnap = {
   builderSel: boolean;
   hiveName: string;
   units: UnitSnap[];
+  groups: UnitGroup[];
   eggs: EggSnap[];
   orders: CommandOpt[];
 };

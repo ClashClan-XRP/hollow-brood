@@ -1167,8 +1167,9 @@ export class Sim {
 	foodTrip(e: Ent) {
 		if (e.faction !== "spider") return false;
 		if (e.caste !== "worker" && e.kind !== "queen") return false;
-		if (e.job !== "harvest" && e.evo !== "harvester") return false;
+		if (!this.harvesting(e) && e.evo !== "harvester") return false;
 		if (e.haul > 0) return e.meat > 0;
+		if (e.job === "scavenge") return false;
 		const tgt = e.targetId ? this.find(e.targetId) : undefined;
 		return Boolean(tgt && tgt.meat > 0);
 	}
@@ -1672,7 +1673,7 @@ export class Sim {
 	seekFeed(e: Ent, dt: number) {
 		if (!this.needsFeed(e) || e.hibernating || e.stage === "chrysalis") return false;
 		if (this.playerLed(e)) return false;
-		if (e.job === "hold" || e.job === "follow" || e.job === "harvest" || e.job === "rove" || e.job === "build") return false;
+		if (e.job === "hold" || e.job === "follow" || this.harvesting(e) || e.job === "rove" || e.job === "build") return false;
 		if (this.canEatKill(e)) {
 			const kill = this.closestKill(e);
 			if (kill) {
@@ -1791,6 +1792,61 @@ export class Sim {
 	}
 	isBuilder(e: Ent) {
 		return e.caste === "worker" && (e.evo === "builder" || e.evo === "engineer");
+	}
+	harvesting(e: Ent) {
+		return e.job === "harvest" || e.job === "forage" || e.job === "scavenge";
+	}
+	harvestWant(e: Ent): "food" | "mat" | "any" {
+		if (e.job === "forage") return "food";
+		if (e.job === "scavenge") return "mat";
+		return "any";
+	}
+	unitKey(e: Ent) {
+		const duty = e.job === "scavenge" ? "m" : e.job === "forage" || e.job === "harvest" ? "f" : e.job === "build" ? "b" : "-";
+		if (e.kind === "queen") return `queen:${e.evo}:${duty}:${e.winged ? "w" : "-"}`;
+		return `${e.caste}:${e.evo}:${duty}:${e.winged ? "w" : "-"}`;
+	}
+	unitGroupLabel(e: Ent) {
+		if (e.kind === "queen") return e.stage === "adolescent" ? "Princess" : "Queen";
+		if (e.evo === "harvester") return e.job === "scavenge" ? "Scrap crew" : "Foragers";
+		if (e.evo === "engineer") return "Engineers";
+		if (e.evo === "builder") return "Builders";
+		if (e.evo === "tank") return "Tanks";
+		if (e.evo === "siege") return "Siege";
+		if (e.caste === "attacker") return e.winged ? "Air attackers" : "Attackers";
+		if (e.caste === "defender") return "Defenders";
+		return "Workers";
+	}
+	toggleGroup(key: string, mode: "one" | "some" | "all" | "none" | "cycle" = "cycle") {
+		const members = this.ents.filter((e) => e.alive && e.faction === "spider" && (e.kind === "brood" || e.kind === "queen" && e.stage === "adult") && this.unitKey(e) === key);
+		if (!members.length) return;
+		const n = members.filter((e) => this.selectedIds.includes(e.id) || e.id === this.selectedId).length;
+		const total = members.length;
+		const some = Math.max(1, Math.ceil(total / 2));
+		let want = n;
+		if (mode === "cycle") {
+			if (n <= 0) want = 1;
+			else if (n < some && some !== 1) want = some;
+			else if (n < total) want = total;
+			else want = 0;
+		} else if (mode === "none") want = 0;
+		else if (mode === "one") want = 1;
+		else if (mode === "some") want = some;
+		else want = total;
+		const ranked = [...members].sort((a, b) => {
+			const as = this.selectedIds.includes(a.id) ? 0 : 1;
+			const bs = this.selectedIds.includes(b.id) ? 0 : 1;
+			if (want > n) {
+				const ai = a.job === "none" || a.job === "hold" ? 0 : 1;
+				const bi = b.job === "none" || b.job === "hold" ? 0 : 1;
+				return ai - bi || as - bs;
+			}
+			return as - bs;
+		});
+		const keep = new Set(ranked.slice(0, want).map((e) => e.id));
+		this.selectedIds = this.selectedIds.filter((id) => !members.some((m) => m.id === id)).concat([...keep]);
+		this.selectedId = this.selectedIds[this.selectedIds.length - 1] ?? 0;
+		this.marking = false;
 	}
 	fortifyCost(tw: Ent) {
 		return this.matPrice(3 + tw.evoHp * 2);
@@ -1919,15 +1975,16 @@ export class Sim {
 		}
 		this.note(n ? `${n} attackers attend the queen.` : "No attackers nearby to assign.");
 	}
-	assignWorker(kind: "harvester" | "builder") {
+	assignWorker(kind: "harvester" | "forage" | "scavenge" | "builder") {
 		const targets = this.selection().filter((e) => e.kind === "queen" || e.caste === "worker");
 		if (!targets.length) {
 			this.note("Select the queen or a worker first.");
 			return;
 		}
+		const harvest = kind === "harvester" || kind === "forage" || kind === "scavenge";
 		for (const e of targets) {
 			if (e.hibernating) continue;
-			if (kind === "harvester") {
+			if (harvest) {
 				if (this.isBuilder(e)) continue;
 				if (e.caste === "worker" && e.evo !== "harvester") {
 					e.evo = "harvester";
@@ -1935,7 +1992,7 @@ export class Sim {
 					e.foodMax += 20;
 					e.speed += 10;
 				}
-				e.job = "harvest";
+				e.job = kind === "scavenge" ? "scavenge" : "forage";
 				e.assignR = 0;
 			} else {
 				if (e.caste === "worker" && e.evo !== "builder" && e.evo !== "engineer") {
@@ -1948,7 +2005,13 @@ export class Sim {
 			}
 		}
 		this.marking = false;
-		this.note(kind === "harvester" ? "Harvesting the silk net until the ring is stripped." : "Building. They repair, and engineers fortify, until you Hold them.");
+		this.note(
+			kind === "scavenge"
+				? "Scrap crew. They pull material in the silk ring the moment it shows."
+				: harvest
+					? "Foragers. They pull food in the silk ring the moment it shows."
+					: "Building. They repair, and engineers fortify, until you Hold them.",
+		);
 	}
 	assignAttacker(job: Job) {
 		this.assignDuty(job);
@@ -1984,12 +2047,12 @@ export class Sim {
 			this.note("Select forage first.");
 			return;
 		}
-		q.job = "harvest";
+		q.job = res.meat > 0 ? "forage" : "scavenge";
 		q.assignX = res.x;
 		q.assignY = res.y;
 		q.assignR = 80;
 		q.targetId = res.id;
-		this.note("The queen walks the forage.");
+		this.note(res.meat > 0 ? "The queen walks the fruit." : "The queen hauls scrap.");
 	}
 	beginMarkHarvest() {
 		const e = this.selection().find((s) => s.kind === "queen" || s.caste === "worker");
@@ -1997,10 +2060,10 @@ export class Sim {
 			this.note("Select the queen or a harvester, then mark a patch.");
 			return;
 		}
-		if (e.caste === "worker" && e.evo !== "harvester" && e.job !== "harvest") {
+		if (e.caste === "worker" && e.evo !== "harvester" && !this.harvesting(e)) {
 			e.evo = "harvester";
-			e.job = "harvest";
-		} else if (e.kind === "queen") e.job = "harvest";
+			e.job = "forage";
+		} else if (e.kind === "queen" && !this.harvesting(e)) e.job = "forage";
 		this.marking = true;
 		this.note("Click the woods. They will harvest that patch and walk it home.");
 	}
@@ -2027,7 +2090,7 @@ export class Sim {
 		return ids.map((id) => this.find(id)).filter((e): e is Ent => Boolean(e));
 	}
 	harvestersOf(list: Ent[]) {
-		return list.filter((e) => e.alive && (e.kind === "queen" || e.caste === "worker" && e.evo !== "builder"));
+		return list.filter((e) => e.alive && (e.kind === "queen" || e.caste === "worker" && !this.isBuilder(e)));
 	}
 	sendHarvest(crew: Ent[], res: Ent) {
 		for (const e of crew) {
@@ -2037,7 +2100,7 @@ export class Sim {
 				e.foodMax += 20;
 				e.speed += 10;
 			}
-			e.job = "harvest";
+			e.job = res.meat > 0 ? "forage" : "scavenge";
 			e.assignX = res.x;
 			e.assignY = res.y;
 			e.assignR = Math.max(90, HARVEST_R);
@@ -2045,8 +2108,8 @@ export class Sim {
 			e.haul = 0;
 		}
 		this.marking = false;
-		this.note(crew.some((e) => e.kind === "queen") ? "Harvesting that forage." : "Harvesters walk the patch.");
-		this.pop(res.x, res.y - 24, "Harvest", "#b7c96a");
+		this.note(res.meat > 0 ? "Foragers take the fruit." : "Scrap crew takes the haul.");
+		this.pop(res.x, res.y - 24, res.meat > 0 ? "Food" : "Scrap", "#b7c96a");
 	}
 	deselect() {
 		this.selectedId = 0;
@@ -2066,9 +2129,8 @@ export class Sim {
 				for (const w of crew.length ? crew : [e]) {
 					if (w.caste === "worker" && w.evo !== "harvester") {
 						w.evo = "harvester";
-						w.job = "harvest";
 					}
-					w.job = "harvest";
+					w.job = w.job === "scavenge" ? "scavenge" : "forage";
 					w.assignX = x;
 					w.assignY = y;
 					w.assignR = HARVEST_R;
@@ -2243,7 +2305,7 @@ export class Sim {
 			e.evoSpd += 1;
 			e.foodMax += 20;
 			e.speed += 10;
-			e.job = "harvest";
+			e.job = "forage";
 			if (e.winged) this.grantTransporters();
 		}
 		if (evo === "builder") {
@@ -2356,7 +2418,7 @@ export class Sim {
 			.map((e) => ({
 				id: e.id,
 				label: e.evo === "harvester" ? `Harvester ${e.id}` : e.evo === "engineer" ? `Engineer ${e.id}` : e.evo === "builder" ? `Builder ${e.id}` : `Worker ${e.id}`,
-				busy: e.job === "harvest" && (e.assignR > 0 || e.haul > 0) || e.evo === "builder" && e.job === "build",
+				busy: this.harvesting(e) && (e.assignR > 0 || e.haul > 0) || this.isBuilder(e) && e.job === "build",
 			}));
 	}
 	commandsForSelection() {
@@ -2367,7 +2429,8 @@ export class Sim {
 			const out: CommandOpt[] = [];
 			if (list.some((e) => e.kind === "queen" || e.caste === "worker")) {
 				out.push(this.opt("hold", "Hold", "order", true, ""));
-				out.push(this.opt("harvest", "Harvest", "order", true, ""));
+				out.push(this.opt("harvest-food", "Harvest food", "order", true, ""));
+				out.push(this.opt("harvest-mat", "Harvest scrap", "order", true, ""));
 				out.push(this.opt("builder", "Build", "order", true, ""));
 				out.push(this.opt("hold-builders", "Hold builders", "order", true, ""));
 				out.push(this.opt("remove-tower", "Pull tower", "build", this.ents.some((t) => t.alive && t.kind === "tower"), "No towers to pull."));
@@ -2479,7 +2542,8 @@ export class Sim {
 		if (e.kind === "queen" && e.stage === "adult") {
 			const out: CommandOpt[] = [
 				this.opt("hold", "Hold", "order", true, ""),
-				this.opt("harvest", "Harvest", "order", true, ""),
+				this.opt("harvest-food", "Harvest food", "order", true, ""),
+				this.opt("harvest-mat", "Harvest scrap", "order", true, ""),
 				this.opt("builder", "Build", "order", true, ""),
 				this.opt("hold-builders", "Hold builders", "order", true, ""),
 				this.opt("guard", "Defend", "order", true, ""),
@@ -2508,10 +2572,11 @@ export class Sim {
 		if (e.caste === "worker") {
 			const out: CommandOpt[] = [
 				this.opt("hold", "Hold", "order", true, ""),
-				this.opt("harvest", "Harvester", "order", !this.isBuilder(e), this.isBuilder(e) ? "This brood builds." : ""),
+				this.opt("harvest-food", "Harvest food", "order", !this.isBuilder(e), this.isBuilder(e) ? "This brood builds." : ""),
+				this.opt("harvest-mat", "Harvest scrap", "order", !this.isBuilder(e), this.isBuilder(e) ? "This brood builds." : ""),
 				this.opt("builder", "Builder", "order", true, ""),
 				this.opt("hold-builders", "Hold builders", "order", this.isBuilder(e) || e.kind === "queen", "Toggle builders first."),
-				this.opt("mark", "Mark patch", "order", e.evo === "harvester" || e.job === "harvest", "Assign as harvester first."),
+				this.opt("mark", "Mark patch", "order", this.harvesting(e) || e.evo === "harvester", "Assign a harvest crew first."),
 				this.opt(
 					"raise-tower",
 					"Raise tower",
@@ -2576,7 +2641,8 @@ export class Sim {
 			this.evolveSelected(id.slice(4) as Evo);
 			return;
 		}
-		if (id === "harvest") this.assignWorker("harvester");
+		if (id === "harvest" || id === "harvest-food") this.assignWorker("forage");
+		else if (id === "harvest-mat") this.assignWorker("scavenge");
 		else if (id === "builder") this.assignWorker("builder");
 		else if (id === "mark") this.beginMarkHarvest();
 		else if (id === "follow") this.assignAttacker("follow");
@@ -2614,7 +2680,7 @@ export class Sim {
 			w.foodMax += 20;
 			w.speed += 10;
 		}
-		w.job = "harvest";
+		w.job = res.meat > 0 ? "forage" : "scavenge";
 		w.assignX = res.x;
 		w.assignY = res.y;
 		w.assignR = 70;
@@ -2842,11 +2908,11 @@ export class Sim {
 				x: this.rallyX,
 				y: this.rallyY
 			}, dt);
-		} else if (q.haul > 0 && q.haul >= this.haulCap(q, q.meat > 0) && q.job === "harvest") {
+		} else if (q.haul > 0 && q.haul >= this.haulCap(q, q.meat > 0) && this.harvesting(q)) {
 			const n = this.nest();
 			if (n) this.seek(q, n, dt);
 			else this.hold(q, dt);
-		} else if (q.job === "harvest") {
+		} else if (this.harvesting(q)) {
 			this.queenForage(q, dt);
 		} else if (q.job === "hold" || q.job === "none" || q.job === "build") {
 			this.hold(q, dt);
@@ -3139,7 +3205,7 @@ export class Sim {
 			this.routes.delete(e.id);
 			return;
 		}
-		if (e.job !== "harvest" && e.evo !== "harvester") {
+		if (e.job !== "harvest" && e.job !== "forage" && e.job !== "scavenge" && e.evo !== "harvester") {
 			if (Math.hypot(e.x - n.x, e.y - n.y) > 90) this.routeTo(e, n.x, n.y, dt);
 			else {
 				this.routes.delete(e.id);
@@ -3296,6 +3362,9 @@ export class Sim {
 			const food = o.meat > 0;
 			if (food && foodFull) continue;
 			if (!food && matFull) continue;
+			const want = this.harvestWant(e);
+			if (want === "food" && !food) continue;
+			if (want === "mat" && food) continue;
 			if (this.claimedYield(o.id, e.id)) continue;
 			const d = dist2(e, o);
 			if (d < best) {
@@ -3731,6 +3800,31 @@ export class Sim {
 					food: Math.ceil(e.foodMeter),
 					foodMax: e.foodMax,
 				})),
+			groups: (() => {
+				const map = new Map<string, { e: Ent; ids: number[]; selected: number }>();
+				for (const e of this.ents) {
+					if (!e.alive || e.faction !== "spider") continue;
+					if (!(e.kind === "queen" && e.stage === "adult" || e.kind === "brood")) continue;
+					const key = this.unitKey(e);
+					const g = map.get(key);
+					const on = this.selectedIds.includes(e.id) || e.id === this.selectedId;
+					if (!g) map.set(key, { e, ids: [e.id], selected: on ? 1 : 0 });
+					else {
+						g.ids.push(e.id);
+						if (on) g.selected += 1;
+					}
+				}
+				return [...map.entries()].map(([key, g]) => ({
+					key,
+					label: this.unitGroupLabel(g.e),
+					caste: g.e.caste,
+					evo: g.e.evo,
+					winged: g.e.winged,
+					count: g.ids.length,
+					selected: g.selected,
+					job: g.e.job,
+				}));
+			})(),
 			eggs: this.ents
 				.filter((e) => e.alive && e.kind === "egg" && e.faction === "spider")
 				.map((e) => ({

@@ -6,7 +6,7 @@ import { loadAssets, type SpriteBook } from "@/game/assets";
 import { Input } from "@/game/input";
 import { render, renderMinimap, screenToWorld, viewWorldSize } from "@/game/render";
 import { Sim } from "@/game/sim";
-import { DIFFICULTIES, FIXED_DT, WORLD_H, WORLD_W, type CommandOpt, type Difficulty, type Evo, type HudSnap, type RoomType } from "@/game/types";
+import { DIFFICULTIES, FIXED_DT, WORLD_H, WORLD_W, type CommandOpt, type Difficulty, type Evo, type HudSnap, type RoomType, type UnitGroup } from "@/game/types";
 import { cn } from "@/lib/utils";
 
 function emptyHud(): HudSnap {
@@ -64,6 +64,7 @@ function emptyHud(): HudSnap {
     builderSel: false,
     hiveName: "",
     units: [],
+    groups: [],
     eggs: [],
     orders: [],
   };
@@ -202,7 +203,7 @@ export function HollowBrood() {
         const res = sim.ents.find((e) => e.alive && Math.hypot(e.x - x, e.y - y) < 80 && sim.isResource(e));
         if (res) sim.sendHarvest([w], res);
         else {
-          w.job = "harvest";
+          w.job = "forage";
           w.assignX = x;
           w.assignY = y;
           w.assignR = 170;
@@ -230,7 +231,7 @@ export function HollowBrood() {
         return true;
       },
       workerPath: () => {
-        const w = sim.ents.find((e) => e.alive && e.caste === "worker" && e.job === "harvest") ?? sim.find(sim.selectedId);
+        const w = sim.ents.find((e) => e.alive && e.caste === "worker" && sim.harvesting(e)) ?? sim.find(sim.selectedId);
         const r = w ? sim.routes.get(w.id) : undefined;
         return {
           points: r?.pts.length ?? 0,
@@ -384,6 +385,10 @@ export function HollowBrood() {
             simRef.current.toggleUnit(id);
             setHud(simRef.current.hud());
           }}
+          onToggleGroup={(key, mode) => {
+            simRef.current.toggleGroup(key, mode);
+            setHud(simRef.current.hud());
+          }}
           assignOpen={assignOpen}
           assignTab={assignTab}
           onAssign={() => setAssignOpen(true)}
@@ -527,6 +532,7 @@ function Hud({
   onCommand,
   onDeselect,
   onToggleUnit,
+  onToggleGroup,
   assignOpen,
   assignTab,
   onAssign,
@@ -543,6 +549,7 @@ function Hud({
   onCommand: (id: string) => void;
   onDeselect: () => void;
   onToggleUnit: (id: number) => void;
+  onToggleGroup: (key: string, mode?: "one" | "some" | "all" | "none" | "cycle") => void;
   assignOpen: boolean;
   assignTab: "eggs" | "units" | "orders";
   onAssign: () => void;
@@ -624,6 +631,7 @@ function Hud({
           tab={assignTab}
           onTab={onTab}
           onToggle={onToggleUnit}
+          onToggleGroup={onToggleGroup}
           onCommand={onCommand}
           onClose={onCloseAssign}
         />
@@ -882,11 +890,21 @@ function CommandBar({
   );
 }
 
+function groupGlyph(g: UnitGroup) {
+  if (g.caste === "queen" || g.label === "Queen" || g.label === "Princess") return Crown;
+  if (g.evo === "harvester" && g.job === "scavenge") return Landmark;
+  if (g.evo === "harvester") return Leaf;
+  if (g.evo === "engineer" || g.evo === "builder") return Hammer;
+  if (g.caste === "defender") return Shield;
+  if (g.caste === "attacker") return Swords;
+  return Users;
+}
+
 function AssignPanel({
   hud,
   tab,
   onTab,
-  onToggle,
+  onToggleGroup,
   onCommand,
   onClose,
 }: {
@@ -894,6 +912,7 @@ function AssignPanel({
   tab: "eggs" | "units" | "orders";
   onTab: (t: "eggs" | "units" | "orders") => void;
   onToggle: (id: number) => void;
+  onToggleGroup: (key: string, mode?: "one" | "some" | "all" | "none" | "cycle") => void;
   onCommand: (id: string) => void;
   onClose: () => void;
 }) {
@@ -902,8 +921,8 @@ function AssignPanel({
     { id: "units", label: "Units" },
     { id: "orders", label: "Orders" },
   ];
-  const units = hud.units.filter((u) => true);
-  const picked = hud.units.filter((u) => u.selected);
+  const groups = hud.groups ?? [];
+  const picked = groups.reduce((n, g) => n + g.selected, 0);
   const orders = (hud.orders.length ? hud.orders : hud.ally?.commands ?? []).filter((c) => c.group === "order" || c.group === "build");
   const evos = (hud.orders.length ? hud.orders : hud.ally?.commands ?? []).filter((c) => c.group === "evo");
   return (
@@ -915,7 +934,7 @@ function AssignPanel({
         <List className="size-5 text-accent" />
         <p className="font-display text-xl tracking-tight">Assign</p>
         <p className="text-xs text-muted">
-          {picked.length ? `${picked.length} toggled` : "Toggle units, then Orders"}
+          {picked ? `${picked} toggled` : "Toggle a type, then Orders"}
         </p>
         <button
           type="button"
@@ -941,9 +960,9 @@ function AssignPanel({
           </button>
         ))}
       </div>
-      <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1">
+      <div className="mt-3 flex min-h-0 flex-1 flex-col">
         {tab === "eggs" && (
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2 overflow-y-auto pr-1">
             {hud.eggs.length === 0 && <p className="text-xs text-muted">No eggs in the hatchery. Lay from Orders when the queen is at the hollow.</p>}
             {hud.eggs.map((e) => (
               <div key={e.id} className="flex min-h-14 items-center justify-between rounded-lg border border-border bg-bg px-3 py-2">
@@ -954,53 +973,116 @@ function AssignPanel({
           </div>
         )}
         {tab === "units" && (
-          <div className="flex flex-col gap-2">
-            {units.length === 0 && <p className="text-xs text-muted">No brood yet. Lay eggs at the hollow.</p>}
-            {units.map((u) => (
-              <button
-                key={u.id}
-                type="button"
-                onClick={() => onToggle(u.id)}
-                className={cn(
-                  "flex min-h-14 items-center gap-3 rounded-lg border px-3 py-2 text-left",
-                  u.selected ? "border-accent bg-surface-elevated" : "border-border bg-bg",
-                )}
-              >
-                <span className={cn("grid size-6 shrink-0 place-items-center rounded-md border text-xs", u.selected ? "border-accent text-accent" : "border-border text-muted")}>
-                  {u.selected ? "●" : ""}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block font-medium capitalize">{u.label}{u.winged ? " · wings" : ""}</span>
-                  <span className="text-xs capitalize text-muted">{u.job === "none" ? "idle" : u.job} · feed {u.food}/{u.foodMax}</span>
-                </span>
-              </button>
+          <div className="flex flex-col gap-2 overflow-y-auto pr-1">
+            {groups.length === 0 && <p className="text-xs text-muted">No brood yet. Lay eggs at the hollow.</p>}
+            {groups.map((g) => (
+              <GroupRow key={g.key} g={g} onToggleGroup={onToggleGroup} />
             ))}
           </div>
         )}
         {tab === "orders" && (
-          <div>
-            <p className="text-xs text-muted">{picked.length ? `${picked.length} ready for orders` : "Toggle units first, then pick Hold, Harvest, or Build."}</p>
-            <p className="mt-3 text-xs font-medium uppercase tracking-[0.16em] text-muted">Orders</p>
-            <div className="mt-2 grid grid-cols-3 gap-2">
-              {orders.length === 0 && <p className="col-span-3 text-xs text-muted">Toggle at least one unit.</p>}
-              {orders.map((c) => (
-                <CmdBtn key={c.id} c={c} onCommand={onCommand} />
-              ))}
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+              <p className="text-xs text-muted">{picked ? `${picked} ready for orders` : "Tap a crew icon below: one, some, or all."}</p>
+              <p className="mt-3 text-xs font-medium uppercase tracking-[0.16em] text-muted">Orders</p>
+              <div className="mt-2 grid grid-cols-3 gap-2">
+                {orders.length === 0 && <p className="col-span-3 text-xs text-muted">Toggle a crew first.</p>}
+                {orders.map((c) => (
+                  <CmdBtn key={c.id} c={c} onCommand={onCommand} />
+                ))}
+              </div>
+              {evos.length > 0 && (
+                <>
+                  <p className="mt-3 text-xs font-medium uppercase tracking-[0.16em] text-muted">Evo path</p>
+                  <div className="mt-2 grid grid-cols-3 gap-2">
+                    {evos.map((c) => (
+                      <CmdBtn key={c.id} c={c} onCommand={onCommand} />
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
-            {evos.length > 0 && (
-              <>
-                <p className="mt-3 text-xs font-medium uppercase tracking-[0.16em] text-muted">Evo path</p>
-                <div className="mt-2 grid grid-cols-3 gap-2">
-                  {evos.map((c) => (
-                    <CmdBtn key={c.id} c={c} onCommand={onCommand} />
-                  ))}
-                </div>
-              </>
-            )}
+            <div className="mt-3 shrink-0 border-t border-border pt-2">
+              <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted">Crew · tap one / some / all</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {groups.map((g) => (
+                  <GroupIcon key={g.key} g={g} onToggleGroup={onToggleGroup} />
+                ))}
+              </div>
+            </div>
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+function GroupRow({
+  g,
+  onToggleGroup,
+}: {
+  g: UnitGroup;
+  onToggleGroup: (key: string, mode?: "one" | "some" | "all" | "none" | "cycle") => void;
+}) {
+  const Icon = groupGlyph(g);
+  const on = g.selected > 0;
+  return (
+    <div className={cn("flex min-h-14 items-center gap-2 rounded-lg border px-2 py-2", on ? "border-accent bg-surface-elevated" : "border-border bg-bg")}>
+      <button
+        type="button"
+        onClick={() => onToggleGroup(g.key, "cycle")}
+        className="flex min-h-11 min-w-0 flex-1 items-center gap-3 px-1 text-left"
+      >
+        <span className={cn("grid size-10 shrink-0 place-items-center rounded-md border", on ? "border-accent text-accent" : "border-border text-muted")}>
+          <Icon className="size-4" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block font-medium">{g.label}{g.winged ? " · wings" : ""}</span>
+          <span className="text-xs capitalize text-muted">{g.selected}/{g.count} · {g.job === "none" ? "idle" : g.job}</span>
+        </span>
+        <span className="tabular-nums text-sm text-muted">×{g.count}</span>
+      </button>
+      <div className="flex shrink-0 gap-1">
+        {(["one", "some", "all"] as const).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            aria-label={`${mode} ${g.label}`}
+            onClick={() => onToggleGroup(g.key, mode)}
+            className="grid size-11 place-items-center rounded-md border border-border text-xs font-medium text-muted"
+          >
+            {mode === "one" ? "1" : mode === "some" ? "½" : "all"}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function GroupIcon({
+  g,
+  onToggleGroup,
+}: {
+  g: UnitGroup;
+  onToggleGroup: (key: string, mode?: "one" | "some" | "all" | "none" | "cycle") => void;
+}) {
+  const Icon = groupGlyph(g);
+  const on = g.selected > 0;
+  return (
+    <button
+      type="button"
+      aria-label={`${g.label} ${g.selected} of ${g.count}`}
+      onClick={() => onToggleGroup(g.key, "cycle")}
+      className={cn(
+        "relative grid size-14 place-items-center rounded-lg border",
+        on ? "border-accent bg-surface-elevated text-accent" : "border-border bg-bg text-muted",
+      )}
+    >
+      <Icon className="size-5" />
+      <span className="absolute -right-1 -top-1 grid min-w-5 place-items-center rounded-full border border-border bg-surface px-1 text-[10px] tabular-nums text-foreground">
+        {on ? `${g.selected}/${g.count}` : `×${g.count}`}
+      </span>
+    </button>
   );
 }
 

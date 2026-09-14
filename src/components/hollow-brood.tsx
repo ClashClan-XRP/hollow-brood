@@ -190,12 +190,28 @@ export function HollowBrood() {
         return true;
       },
       harvestAt: (x: number, y: number) => {
-        const w = sim.ents.find((e) => e.alive && e.caste === "worker");
+        const w = sim.ents.find((e) => e.alive && e.caste === "worker") ?? sim.queen();
         if (!w) return false;
-        sim.selectedId = w.id;
-        sim.assignWorker("harvester");
-        sim.clickWorld(x, y);
+        sim.selectOnly(w.id);
+        const res = sim.ents.find((e) => e.alive && Math.hypot(e.x - x, e.y - y) < 80 && sim.isResource(e));
+        if (res) sim.sendHarvest([w], res);
+        else {
+          w.job = "harvest";
+          w.assignX = x;
+          w.assignY = y;
+          w.assignR = 170;
+        }
         return true;
+      },
+      clickFruit: () => {
+        const f = sim.ents.find((e) => e.alive && e.kind === "fruit" && e.meat > 0);
+        if (!f) return false;
+        sim.clickWorld(f.x, f.y - f.draw * 0.32);
+        return true;
+      },
+      pickAt: (x: number, y: number) => {
+        const h = sim.pickClick(x, y);
+        return h ? `${h.kind}:${h.id}` : "none";
       },
       workerPath: () => {
         const w = sim.ents.find((e) => e.alive && e.caste === "worker" && e.job === "harvest") ?? sim.find(sim.selectedId);
@@ -653,7 +669,7 @@ function AllyCard({
   return (
     <div
       data-ui
-      className="pointer-events-auto absolute right-3 top-24 w-72 rounded-xl border border-border bg-surface p-3 max-[820px]:bottom-36 max-[820px]:top-auto max-[820px]:w-64"
+      className="pointer-events-auto absolute right-3 top-20 w-72 rounded-xl border border-border bg-surface p-3 max-[820px]:bottom-36 max-[820px]:top-auto max-[820px]:w-64"
     >
       <div className="flex items-start gap-3">
         <div className="grid size-12 shrink-0 place-items-center rounded-lg border border-border bg-surface-elevated text-accent">
@@ -791,6 +807,7 @@ function CommandBar({
             <button
               key={u.id}
               type="button"
+              aria-label={u.label}
               onClick={() => onToggleUnit(u.id)}
               className={cn(
                 "min-h-11 rounded-lg border px-2.5 py-1.5 text-left text-xs leading-tight",

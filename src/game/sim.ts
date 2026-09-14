@@ -635,11 +635,15 @@ export class Sim {
 		});
 	}
 	spawnAlly(caste: Caste, x: number, y: number, extra: Partial<Ent> = {}) {
+		const q = this.queen();
 		const home = this.linkedNodes()[0] ?? NEST_POS;
 		const hx = extra.homeX ?? home.x;
 		const hy = extra.homeY ?? home.y;
+		const k = this.casteCount(caste);
+		const sx = q ? q.x + 34 + (k % 3) * 22 : x;
+		const sy = q ? q.y + 14 + Math.floor(k / 3) * 18 : y;
 		if (caste === "worker") {
-			const w = this.make("brood", "spider", x, y, {
+			const w = this.make("brood", "spider", sx, sy, {
 			r: 16,
 			hp: 22,
 			maxHp: 22,
@@ -660,7 +664,7 @@ export class Sim {
 			return w;
 		}
 		if (caste === "defender") {
-			const d = this.make("brood", "spider", x, y, {
+			const d = this.make("brood", "spider", sx, sy, {
 			r: 16,
 			hp: 40,
 			maxHp: 40,
@@ -678,7 +682,7 @@ export class Sim {
 			this.selectOnly(d.id);
 			return d;
 		}
-		const a = this.make("brood", "spider", x, y, {
+		const a = this.make("brood", "spider", sx, sy, {
 			r: 16,
 			hp: 30,
 			maxHp: 30,
@@ -1592,18 +1596,40 @@ export class Sim {
 		this.marking = false;
 	}
 	toggleUnit(id: number) {
+		if (this.selectedIds.length === 1 && this.selectedIds[0] === id) return;
 		if (this.selectedIds.includes(id)) {
 			this.selectedIds = this.selectedIds.filter((x) => x !== id);
 			this.selectedId = this.selectedIds[this.selectedIds.length - 1] ?? 0;
 		} else {
-			this.selectedIds = [...this.selectedIds, id];
-			this.selectedId = id;
+			this.selectOnly(id);
 		}
 		this.marking = false;
 	}
 	selection() {
 		const ids = this.selectedIds.length ? this.selectedIds : this.selectedId ? [this.selectedId] : [];
 		return ids.map((id) => this.find(id)).filter((e): e is Ent => Boolean(e));
+	}
+	harvestersOf(list: Ent[]) {
+		return list.filter((e) => e.alive && (e.kind === "queen" || e.caste === "worker" && e.evo !== "builder"));
+	}
+	sendHarvest(crew: Ent[], res: Ent) {
+		for (const e of crew) {
+			if (e.caste === "worker" && e.evo !== "harvester") {
+				e.evo = "harvester";
+				e.evoSpd += 1;
+				e.foodMax += 20;
+				e.speed += 10;
+			}
+			e.job = "harvest";
+			e.assignX = res.x;
+			e.assignY = res.y;
+			e.assignR = Math.max(90, HARVEST_R);
+			e.targetId = res.id;
+			e.haul = 0;
+		}
+		this.marking = false;
+		this.note(crew.some((e) => e.kind === "queen") ? "Harvesting that forage." : "Harvesters walk the patch.");
+		this.pop(res.x, res.y - 24, "Harvest", "#b7c96a");
 	}
 	deselect() {
 		this.selectedId = 0;
@@ -1617,15 +1643,20 @@ export class Sim {
 			return;
 		}
 		if (this.marking) {
-			const e = this.selection().find((s) => s.kind === "queen" || s.caste === "worker");
-			if (e && e.alive) {
-				if (e.caste === "worker" && e.evo !== "harvester") {
-					e.evo = "harvester";
+			const crew = this.harvestersOf(this.selection());
+			const e = crew[0] ?? this.selection().find((s) => s.kind === "queen" || s.caste === "worker");
+			if (e) {
+				for (const w of crew.length ? crew : [e]) {
+					if (w.caste === "worker" && w.evo !== "harvester") {
+						w.evo = "harvester";
+						w.job = "harvest";
+					}
+					w.job = "harvest";
+					w.assignX = x;
+					w.assignY = y;
+					w.assignR = HARVEST_R;
+					w.targetId = 0;
 				}
-				e.job = "harvest";
-				e.assignX = x;
-				e.assignY = y;
-				e.assignR = HARVEST_R;
 				this.marking = false;
 				this.note("Harvest marked. They walk the patch and bring it home.");
 				this.pop(x, y, "Harvest", "#b7c96a");
@@ -1634,14 +1665,25 @@ export class Sim {
 			this.marking = false;
 		}
 		const hit = this.pickClick(x, y);
-		if (hit) {
-			this.selectOnly(hit.id);
-			if (hit.kind === "hive" && this.hiveOpen(hit)) {
-				this.note("Hive stands empty. Enter to take what they stored.");
+		if (hit && this.isResource(hit)) {
+			let crew = this.harvestersOf(this.selection());
+			if (!crew.length) {
+				const q = this.queen();
+				if (q) crew = [q];
 			}
+			if (crew.length) {
+				this.sendHarvest(crew, hit);
+				if (!this.selection().some((e) => e.kind === "queen" || e.caste === "worker")) this.selectOnly(crew[0].id);
+				return;
+			}
+			this.selectOnly(hit.id);
 			return;
 		}
-		this.deselect();
+		if (hit && (hit.kind === "brood" || hit.kind === "queen" || hit.kind === "tower" || hit.kind === "hive" || hit.kind === "nest")) {
+			this.selectOnly(hit.id);
+			if (hit.kind === "hive" && this.hiveOpen(hit)) this.note("Hive stands empty. Enter to take what they stored.");
+			return;
+		}
 	}
 	pickClick(x: number, y: number) {
 		let best: Ent | undefined;
@@ -1654,15 +1696,17 @@ export class Sim {
 			const tower = e.kind === "tower";
 			const hive = e.kind === "hive";
 			if (!resource && !unit && !nest && !tower && !hive) continue;
-			const pad = unit ? 40 : resource || hive ? 38 : nest ? 18 : 16;
-			const d = Math.hypot(e.x - x, e.y - y);
-			if (d > e.r + pad) continue;
+			const visY = resource && (e.kind === "fruit" || e.kind === "node") ? e.y - e.draw * 0.32 : e.y;
+			const reach = unit ? e.r + 46 : resource ? Math.max(e.r + 48, e.draw * 0.55) : nest ? 36 : e.r + 18;
+			const d = Math.hypot(e.x - x, visY - y);
+			if (d > reach) continue;
 			let score = d;
-			if (unit) score -= 48;
-			else if (resource) score += 6;
-			else if (tower) score += 12;
-			else if (hive) score += 18;
-			else if (nest) score += 80;
+			if (e.kind === "brood") score -= 90;
+			else if (e.kind === "queen") score -= 20;
+			else if (resource) score -= 10;
+			else if (tower) score += 8;
+			else if (hive) score += 14;
+			else if (nest) score += 120;
 			if (score < bestScore) {
 				bestScore = score;
 				best = e;
@@ -2652,6 +2696,7 @@ export class Sim {
 		const r2 = r * r;
 		for (const o of this.ents) {
 			if (!o.alive || !this.yieldKind(o)) continue;
+			if ((o.meat || 0) <= 0 && (o.haul || 0) <= 0) continue;
 			const inPatch = (o.x - x) ** 2 + (o.y - y) ** 2;
 			if (inPatch > r2) continue;
 			if (this.claimedYield(o.id, e.id)) continue;

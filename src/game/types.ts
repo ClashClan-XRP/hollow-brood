@@ -302,6 +302,10 @@ export type UnitSnap = {
   label: string;
   caste: Caste;
   job: Job;
+  evo: Evo;
+  hp: number;
+  maxHp: number;
+  winged: boolean;
   selected: boolean;
 };
 
@@ -377,6 +381,7 @@ export type HudSnap = {
   builderSel: boolean;
   hiveName: string;
   units: UnitSnap[];
+  orders: CommandOpt[];
 };
 
 export type ControlsProbe = {

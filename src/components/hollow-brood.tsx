@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type HTMLAttributes, type PointerEvent, type ReactNode, type RefObject } from "react";
-import { Crown, Crosshair, Flag, Hammer, Home, Landmark, Leaf, MapPin, Pause, Play, Shield, Swords, Webhook, X } from "lucide-react";
+import { Crown, Crosshair, Flag, Hammer, Home, Landmark, Leaf, List, MapPin, Pause, Play, Shield, Swords, Users, Webhook, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { GameAudio } from "@/game/audio";
 import { loadAssets, type SpriteBook } from "@/game/assets";
 import { Input } from "@/game/input";
 import { render, renderMinimap, screenToWorld, viewWorldSize } from "@/game/render";
 import { Sim } from "@/game/sim";
-import { DIFFICULTIES, FIXED_DT, WORLD_H, WORLD_W, type CommandOpt, type Difficulty, type Evo, type HudSnap, type RoomType } from "@/game/types";
+import { DIFFICULTIES, FIXED_DT, WORLD_H, WORLD_W, type Caste, type CommandOpt, type Difficulty, type Evo, type HudSnap, type RoomType } from "@/game/types";
 import { cn } from "@/lib/utils";
 
 function emptyHud(): HudSnap {
@@ -64,6 +64,7 @@ function emptyHud(): HudSnap {
     builderSel: false,
     hiveName: "",
     units: [],
+    orders: [],
   };
 }
 
@@ -78,6 +79,8 @@ export function HollowBrood() {
   const [ready, setReady] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [hud, setHud] = useState<HudSnap>(emptyHud);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [casteFilter, setCasteFilter] = useState<"all" | Caste>("all");
   const hudTimer = useRef(0);
 
   useEffect(() => {
@@ -302,6 +305,8 @@ export function HollowBrood() {
   function begin(difficulty: Difficulty) {
     audioRef.current.unlock();
     simRef.current.reset(difficulty);
+    setAssignOpen(false);
+    setCasteFilter("all");
     setHud(simRef.current.hud());
   }
 
@@ -368,6 +373,11 @@ export function HollowBrood() {
             simRef.current.toggleUnit(id);
             setHud(simRef.current.hud());
           }}
+          assignOpen={assignOpen}
+          casteFilter={casteFilter}
+          onAssign={() => setAssignOpen(true)}
+          onFilter={setCasteFilter}
+          onCloseAssign={() => setAssignOpen(false)}
           onDeselect={() => {
             simRef.current.deselect();
             setHud(simRef.current.hud());
@@ -506,6 +516,11 @@ function Hud({
   onCommand,
   onDeselect,
   onToggleUnit,
+  assignOpen,
+  casteFilter,
+  onAssign,
+  onFilter,
+  onCloseAssign,
 }: {
   hud: HudSnap;
   miniRef: RefObject<HTMLCanvasElement | null>;
@@ -517,6 +532,11 @@ function Hud({
   onCommand: (id: string) => void;
   onDeselect: () => void;
   onToggleUnit: (id: number) => void;
+  assignOpen: boolean;
+  casteFilter: "all" | Caste;
+  onAssign: () => void;
+  onFilter: (c: "all" | Caste) => void;
+  onCloseAssign: () => void;
 }) {
   return (
     <div data-ui className="pointer-events-none absolute inset-0 z-10">
@@ -585,7 +605,18 @@ function Hud({
         <p className="px-1 py-0.5 text-xs uppercase tracking-wider text-muted">Map</p>
       </div>
 
-      {hud.ally && <AllyCard hud={hud} onCommand={onCommand} onDeselect={onDeselect} />}
+      {hud.ally && !assignOpen && <AllyCard hud={hud} onCommand={onCommand} onDeselect={onDeselect} />}
+
+      {assignOpen && (
+        <AssignPanel
+          hud={hud}
+          filter={casteFilter}
+          onFilter={onFilter}
+          onToggle={onToggleUnit}
+          onCommand={onCommand}
+          onClose={onCloseAssign}
+        />
+      )}
 
       {hud.view === "hive" && (
         <div className="pointer-events-auto absolute left-1/2 top-24 w-64 -translate-x-1/2 rounded-xl border border-border bg-surface p-3">
@@ -633,7 +664,7 @@ function Hud({
         </div>
       )}
 
-      <CommandBar hud={hud} onHold={onHold} onToggleUnit={onToggleUnit} />
+      <CommandBar hud={hud} onHold={onHold} onAssign={onAssign} />
     </div>
   );
 }
@@ -784,11 +815,11 @@ function Meter({
 function CommandBar({
   hud,
   onHold,
-  onToggleUnit,
+  onAssign,
 }: {
   hud: HudSnap;
   onHold: (name: string, down: boolean) => void;
-  onToggleUnit: (id: number) => void;
+  onAssign: () => void;
 }) {
   const press = (name: string) => ({
     onPointerDown: (e: PointerEvent) => {
@@ -802,29 +833,22 @@ function CommandBar({
     },
     onPointerCancel: () => onHold(name, false),
   });
+  const picked = hud.units.filter((u) => u.selected).length;
   return (
     <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-4 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
       <div className="pointer-events-none mb-1 size-24 shrink-0 rounded-full border-2 border-border/80 bg-surface/40" />
 
-      <div className="pointer-events-auto min-w-0 flex-1 max-w-md">
-        <p className="mb-1 text-xs font-medium uppercase tracking-[0.16em] text-muted">Units</p>
-        <div className="flex max-h-28 flex-wrap gap-2 overflow-y-auto pr-1">
-          {hud.units.map((u) => (
-            <button
-              key={u.id}
-              type="button"
-              aria-label={u.label}
-              onClick={() => onToggleUnit(u.id)}
-              className={cn(
-                "min-h-11 rounded-lg border px-2.5 py-1.5 text-left text-xs leading-tight",
-                u.selected ? "border-accent bg-surface-elevated text-foreground" : "border-border bg-surface text-muted",
-              )}
-            >
-              <span className="block font-medium capitalize text-foreground">{u.label}</span>
-              <span className="capitalize">{u.job === "none" ? "idle" : u.job}</span>
-            </button>
-          ))}
-        </div>
+      <div className="pointer-events-auto flex flex-col items-center gap-2">
+        <button
+          type="button"
+          onClick={onAssign}
+          className="flex min-h-14 min-w-36 items-center justify-center gap-2 rounded-xl border border-accent bg-surface-elevated px-4 py-2 text-sm font-medium"
+        >
+          <Users className="size-5 text-accent" />
+          Assign
+          {picked > 0 && <span className="tabular-nums text-muted">{picked}</span>}
+        </button>
+        <p className="text-xs uppercase tracking-[0.16em] text-muted">Brood {hud.brood}/{hud.broodMax}</p>
       </div>
 
       <div className="pointer-events-auto flex flex-col items-end gap-3">
@@ -843,6 +867,140 @@ function CommandBar({
         <RoundBtn label="Bite" hotkey="Space" icon={<Swords />} large {...press("bite")} />
       </div>
     </div>
+  );
+}
+
+function AssignPanel({
+  hud,
+  filter,
+  onFilter,
+  onToggle,
+  onCommand,
+  onClose,
+}: {
+  hud: HudSnap;
+  filter: "all" | Caste;
+  onFilter: (c: "all" | Caste) => void;
+  onToggle: (id: number) => void;
+  onCommand: (id: string) => void;
+  onClose: () => void;
+}) {
+  const tabs: { id: "all" | Caste; label: string }[] = [
+    { id: "all", label: "All" },
+    { id: "queen", label: "Queen" },
+    { id: "worker", label: "Workers" },
+    { id: "attacker", label: "Attackers" },
+    { id: "defender", label: "Defenders" },
+  ];
+  const units = hud.units.filter((u) => filter === "all" || u.caste === filter);
+  const picked = hud.units.filter((u) => u.selected);
+  const orders = (hud.orders.length ? hud.orders : hud.ally?.commands ?? []).filter((c) => c.group === "order" || c.group === "build");
+  const evos = (hud.orders.length ? hud.orders : hud.ally?.commands ?? []).filter((c) => c.group === "evo");
+  return (
+    <div
+      data-ui
+      className="pointer-events-auto absolute inset-x-3 bottom-32 top-20 z-20 mx-auto flex w-full max-w-lg flex-col rounded-xl border border-border bg-surface p-3 shadow-lg"
+    >
+      <div className="flex items-center gap-2">
+        <List className="size-5 text-accent" />
+        <p className="font-display text-xl tracking-tight">Assign</p>
+        <p className="text-xs text-muted">
+          {picked.length ? `${picked.length} toggled` : "Toggle brood, then order or evo"}
+        </p>
+        <button
+          type="button"
+          aria-label="Close assign"
+          onClick={onClose}
+          className="ml-auto grid size-11 place-items-center rounded-lg border border-border text-muted"
+        >
+          <X className="size-4" />
+        </button>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => onFilter(t.id)}
+            className={cn(
+              "min-h-11 rounded-lg border px-3 text-xs font-medium",
+              filter === t.id ? "border-accent bg-surface-elevated text-foreground" : "border-border bg-bg text-muted",
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1">
+        {units.length === 0 && (
+          <p className="text-xs text-muted">No brood in this caste yet. Lay eggs at the hollow.</p>
+        )}
+        <div className="flex flex-col gap-2">
+          {units.map((u) => (
+            <button
+              key={u.id}
+              type="button"
+              onClick={() => onToggle(u.id)}
+              className={cn(
+                "flex min-h-14 items-center gap-3 rounded-lg border px-3 py-2 text-left",
+                u.selected ? "border-accent bg-surface-elevated" : "border-border bg-bg",
+              )}
+            >
+              <span className={cn("grid size-6 shrink-0 place-items-center rounded-md border text-xs", u.selected ? "border-accent text-accent" : "border-border text-muted")}>
+                {u.selected ? "●" : ""}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block font-medium capitalize">{u.label}{u.winged ? " · wings" : ""}</span>
+                <span className="text-xs capitalize text-muted">{u.job === "none" ? "idle" : u.job} · {u.hp}/{u.maxHp}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="mt-3 border-t border-border pt-3">
+        <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted">Orders</p>
+        <div className="mt-2 grid grid-cols-3 gap-2">
+          {orders.length === 0 && <p className="col-span-3 text-xs text-muted">Toggle at least one unit.</p>}
+          {orders.map((c) => (
+            <CmdBtn key={c.id} c={c} onCommand={onCommand} />
+          ))}
+        </div>
+        {evos.length > 0 && (
+          <>
+            <p className="mt-3 text-xs font-medium uppercase tracking-[0.16em] text-muted">Evo path</p>
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              {evos.map((c) => (
+                <CmdBtn key={c.id} c={c} onCommand={onCommand} />
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CmdBtn({ c, onCommand }: { c: CommandOpt; onCommand: (id: string) => void }) {
+  return (
+    <button
+      type="button"
+      disabled={!c.enabled}
+      title={c.enabled ? c.label : c.reason}
+      onClick={() => onCommand(c.id)}
+      className={cn(
+        "flex min-h-11 flex-col items-center justify-center rounded-lg border px-1 py-1.5 text-center text-xs leading-tight disabled:opacity-40",
+        c.enabled ? "border-border bg-surface-elevated text-foreground" : "border-border bg-bg text-muted",
+      )}
+    >
+      <span className="font-medium">{c.label}</span>
+      {(c.costF > 0 || c.costM > 0) && (
+        <span className="mt-0.5 tabular-nums text-muted">
+          {c.costF > 0 ? `${c.costF}f` : ""}
+          {c.costF > 0 && c.costM > 0 ? " " : ""}
+          {c.costM > 0 ? `${c.costM}m` : ""}
+        </span>
+      )}
+    </button>
   );
 }
 

@@ -43,7 +43,12 @@ export type Kind =
   | "tree"
   | "burrow"
   | "pickup"
-  | "node";
+  | "node"
+  | "fruit"
+  | "scrap"
+  | "solar"
+  | "battery"
+  | "loot";
 
 export type Caste = "worker" | "attacker" | "defender" | "queen" | "none";
 export type Job = "none" | "harvest" | "build" | "guard" | "rove" | "follow" | "hibernate" | "haul";
@@ -55,11 +60,13 @@ export type Evo =
   | "air"
   | "harvester"
   | "builder"
+  | "electric"
+  | "siegehold"
   | "none";
 export type Stage = "adult" | "adolescent" | "chrysalis";
 export type UnitRole = Caste | "raider" | "torch" | "pack" | "siege" | "none";
 export type GameMode = "title" | "playing" | "paused" | "over" | "succession";
-export type ViewMode = "world" | "nest";
+export type ViewMode = "world" | "nest" | "hive";
 export type Difficulty = "easy" | "standard" | "difficult";
 export type RoomType = "hatchery" | "food" | "material" | "chrysalis" | "chamber";
 export type EggKind = "worker" | "attacker" | "defender" | "queen";
@@ -201,6 +208,11 @@ export type Ent = {
   assignX: number;
   assignY: number;
   assignR: number;
+  skill: number;
+  drops: number;
+  unearthed: boolean;
+  buried: number;
+  garrisonId: number;
 };
 
 export type Particle = {
@@ -226,8 +238,25 @@ export type Ticker = { text: string; life: number };
 
 export type UpgradeId = "fang" | "carapace" | "silk" | "brood";
 
+export type CommandOpt = {
+  id: string;
+  label: string;
+  group: "order" | "evo" | "build" | "roster";
+  enabled: boolean;
+  reason: string;
+  costF: number;
+  costM: number;
+};
+
+export type RosterSnap = {
+  id: number;
+  label: string;
+  busy: boolean;
+};
+
 export type AllySnap = {
   id: number;
+  kind: Kind;
   caste: Caste;
   evo: Evo;
   job: Job;
@@ -236,6 +265,11 @@ export type AllySnap = {
   winged: boolean;
   marked: boolean;
   label: string;
+  skill: number;
+  meat: number;
+  unearthed: boolean;
+  commands: CommandOpt[];
+  roster: RosterSnap[];
 };
 
 export type HudSnap = {
@@ -287,6 +321,8 @@ export type HudSnap = {
   silkCost: number;
   ally: AllySnap | null;
   marking: boolean;
+  builderSel: boolean;
+  hiveName: string;
 };
 
 export type ControlsProbe = {
@@ -314,6 +350,8 @@ export type SilkProbe = {
   raise: () => number;
   layWorker: () => boolean;
   spawnWorker: () => boolean;
+  selectFruit: () => boolean;
+  selectWorker: () => boolean;
   harvestAt: (x: number, y: number) => boolean;
   workerPath: () => { points: number; bends: number; gx: number; gy: number };
   splice: () => "spliced" | "blocked" | "none";

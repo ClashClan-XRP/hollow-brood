@@ -130,6 +130,10 @@ export function render(
   viewW: number,
   viewH: number,
 ) {
+  if (sim.view === "hive") {
+    renderHive(ctx, sim, sprites, viewW, viewH);
+    return;
+  }
   if (sim.view === "nest") {
     renderNest(ctx, sim, sprites, viewW, viewH);
     return;
@@ -266,13 +270,96 @@ export function render(
       case "burrow":
         drawProp(ctx, sprites.burrow, e.x, e.y, e.draw, e.draw);
         break;
-      case "nest":
+      case "nest": {
+        const dmg = 1 - clamp01(e.hp / e.maxHp);
+        ctx.save();
+        if (dmg > 0.08) ctx.filter = `saturate(${1 - dmg * 0.45}) brightness(${1 - dmg * 0.35})`;
         drawProp(ctx, sprites.nest, e.x, e.y - 8, e.draw, e.draw * 0.92);
+        ctx.restore();
+        if (dmg > 0.12) {
+          ctx.fillStyle = `rgba(196,92,76,${0.12 + dmg * 0.35})`;
+          ctx.beginPath();
+          ctx.ellipse(e.x, e.y + 18, e.draw * 0.28, e.draw * 0.1, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
         hpBar(ctx, e, e.draw * 0.38, "#c45c4c");
         break;
+      }
       case "tree":
         drawProp(ctx, sprites.tree, e.x, e.y - 28, e.draw * 0.85, e.draw);
         break;
+      case "fruit": {
+        drawProp(ctx, sprites.tree, e.x, e.y - 22, e.draw * 0.85, e.draw);
+        ctx.fillStyle = "#c45c4c";
+        for (let i = 0; i < Math.min(6, Math.max(1, Math.ceil(e.meat / 4))); i++) {
+          const a = i * 1.1 + e.age * 0.2;
+          ctx.beginPath();
+          ctx.arc(e.x + Math.cos(a) * 14, e.y - 18 + Math.sin(a * 1.3) * 10, 4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        break;
+      }
+      case "solar": {
+        const bury = e.buried;
+        ctx.save();
+        ctx.translate(e.x, e.y);
+        ctx.fillStyle = e.unearthed ? "#1c2620" : "#141c18";
+        ctx.strokeStyle = "rgba(201,208,196,0.55)";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.rect(-18, -10 + bury * 14, 36, 20);
+        ctx.fill();
+        ctx.stroke();
+        ctx.strokeStyle = "rgba(183,201,106,0.7)";
+        ctx.beginPath();
+        ctx.moveTo(-14, -6 + bury * 14);
+        ctx.lineTo(14, -6 + bury * 14);
+        ctx.moveTo(-14, 0 + bury * 14);
+        ctx.lineTo(14, 0 + bury * 14);
+        ctx.stroke();
+        if (bury > 0.3) {
+          ctx.fillStyle = "rgba(20,28,24,0.55)";
+          ctx.fillRect(-20, 6, 40, 12);
+        }
+        ctx.restore();
+        break;
+      }
+      case "battery": {
+        const bury = e.buried;
+        ctx.save();
+        ctx.translate(e.x, e.y + bury * 8);
+        ctx.fillStyle = e.unearthed ? "#2a3530" : "#1c2620";
+        ctx.beginPath();
+        ctx.roundRect(-8, -14, 16, 26, 4);
+        ctx.fill();
+        ctx.fillStyle = "#b7c96a";
+        ctx.fillRect(-3, -18, 6, 5);
+        ctx.fillStyle = "#c45c4c";
+        ctx.fillRect(-5, -4, 10, 6);
+        if (bury > 0.3) {
+          ctx.fillStyle = "rgba(20,28,24,0.6)";
+          ctx.fillRect(-12, 8, 24, 14);
+        }
+        ctx.restore();
+        break;
+      }
+      case "scrap": {
+        ctx.fillStyle = "#8a9388";
+        ctx.beginPath();
+        ctx.moveTo(e.x - 8, e.y + 4);
+        ctx.lineTo(e.x, e.y - 8);
+        ctx.lineTo(e.x + 9, e.y + 3);
+        ctx.closePath();
+        ctx.fill();
+        break;
+      }
+      case "loot": {
+        ctx.fillStyle = e.meat > 0 ? "#c45c4c" : "#c9d0c4";
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, 9, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      }
       case "egg":
         if (e.role === "siege") ctx.filter = "hue-rotate(72deg) saturate(1.15)";
         drawProp(ctx, sprites.eggs, e.x, e.y, e.draw, e.draw);
@@ -464,8 +551,15 @@ export function render(
         hpBar(ctx, e, 20, "#8a9388");
         break;
       }
-      case "tower":
+      case "tower": {
         drawProp(ctx, sprites.tower, e.x, e.y - 10, e.draw * 0.7, e.draw);
+        if (e.evo === "electric" || e.evo === "siegehold") {
+          ctx.strokeStyle = "rgba(183,201,106,0.55)";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(e.x, e.y, 22 + Math.sin(sim.time * 6) * 3, 0, Math.PI * 2);
+          ctx.stroke();
+        }
         ctx.save();
         ctx.setLineDash(e.linked ? [] : [5, 6]);
         ctx.strokeStyle = e.linked
@@ -482,8 +576,10 @@ export function render(
         ctx.font = "600 11px Figtree, sans-serif";
         ctx.textAlign = "center";
         ctx.fillStyle = e.linked ? "#c9d0c4" : "#c45c4c";
-        ctx.fillText(e.linked ? (e.alert ? "ALERT" : "NET") : "MUTE", e.x, e.y + 36);
+        const tag = e.evo === "siegehold" ? "SIEGE" : e.evo === "electric" ? "VOLT" : e.linked ? (e.alert ? "ALERT" : "NET") : "MUTE";
+        ctx.fillText(tag, e.x, e.y + 36);
         break;
+      }
       case "hive":
         drawProp(ctx, sprites.nest, e.x, e.y, e.draw * 0.7, e.draw * 0.7);
         ctx.filter = e.faction === "bee" ? "sepia(0.8) saturate(1.6)" : "hue-rotate(-20deg) saturate(1.3)";
@@ -589,6 +685,52 @@ export function render(
   }
 
   ctx.restore();
+}
+
+function renderHive(
+  ctx: CanvasRenderingContext2D,
+  sim: Sim,
+  sprites: SpriteBook,
+  viewW: number,
+  viewH: number,
+) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = "#0b100e";
+  ctx.fillRect(0, 0, viewW, viewH);
+  const img = sprites.nestInside;
+  if (img.complete && img.naturalWidth) {
+    const s = Math.max(viewW / img.naturalWidth, viewH / img.naturalHeight);
+    const w = img.naturalWidth * s;
+    const h = img.naturalHeight * s;
+    ctx.drawImage(img, (viewW - w) / 2, (viewH - h) / 2, w, h);
+  }
+  ctx.fillStyle = "rgba(11,16,14,0.35)";
+  ctx.fillRect(0, 0, viewW, viewH);
+  const h = sim.find(sim.hiveId);
+  const loot = h ? sim.ents.filter((e) => e.alive && e.kind === "loot" && e.site === h.site) : [];
+  ctx.font = "600 14px Figtree, sans-serif";
+  ctx.textAlign = "center";
+  loot.forEach((e, i) => {
+    const x = (0.34 + i * 0.32) * viewW;
+    const y = 0.5 * viewH;
+    const on = sim.selectedId === e.id;
+    ctx.fillStyle = on ? "rgba(183,201,106,0.28)" : "rgba(11,16,14,0.4)";
+    ctx.beginPath();
+    ctx.ellipse(x, y, 64, 40, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = e.meat > 0 ? "#c45c4c" : "#c9d0c4";
+    ctx.beginPath();
+    ctx.arc(x, y, 16, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#e8ebe4";
+    ctx.fillText(e.meat > 0 ? "Hive food" : "Hive material", x, y - 48);
+    ctx.fillStyle = "#8a9388";
+    ctx.fillText(e.meat > 0 ? `${Math.floor(e.meat)} food` : `${Math.floor(e.haul)} mat`, x, y + 46);
+  });
+  if (!loot.length) {
+    ctx.fillStyle = "#8a9388";
+    ctx.fillText("The caches are empty.", viewW / 2, viewH / 2);
+  }
 }
 
 function renderNest(

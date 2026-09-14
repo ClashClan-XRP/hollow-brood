@@ -1087,7 +1087,16 @@ export class Sim {
 		if (e.evo === "tank") spd *= .78;
 		if (e.foodMeter < e.foodMax * 0.22) spd *= 0.62;
 		if (e.hibernating) spd *= 1.1;
+		if (this.foodTrip(e)) spd *= 3;
 		return spd;
+	}
+	foodTrip(e: Ent) {
+		if (e.faction !== "spider") return false;
+		if (e.caste !== "worker" && e.kind !== "queen") return false;
+		if (e.job !== "harvest" && e.evo !== "harvester") return false;
+		if (e.haul > 0) return e.meat > 0;
+		const tgt = e.targetId ? this.find(e.targetId) : undefined;
+		return Boolean(tgt && tgt.meat > 0);
 	}
 	bakeNav() {
 		this.nav.clear();
@@ -1576,10 +1585,11 @@ export class Sim {
 	playerLed(e: Ent) {
 		return this.selectedIds.includes(e.id) || e.id === this.selectedId;
 	}
-	haulCap(e: Ent) {
-		const base = this.tune().gather;
-		if (e.kind === "queen") return base * 5;
-		return base + (e.transCap > 0 ? 4 : 0);
+	haulCap(e: Ent, food = true) {
+		const g = this.tune().gather;
+		const workerAmt = food ? g * 3 : g * 5;
+		if (e.kind === "queen") return workerAmt * 5;
+		return workerAmt + (e.transCap > 0 ? 4 : 0);
 	}
 	seekFeed(e: Ent, dt: number) {
 		if (!this.needsFeed(e) || e.hibernating || e.stage === "chrysalis") return false;
@@ -1694,8 +1704,9 @@ export class Sim {
 			linked: false,
 			evo: "none",
 		});
-		b.job = "build";
 		b.skill += 1;
+		if (b.kind === "queen") b.job = "hold";
+		else b.job = "build";
 		this.note("Builder raises a mute post. Any queen can silk it online.");
 		this.bakeNav();
 		this.pop(b.x, b.y - 24, "Tower", "#e8ebe4");
@@ -1787,7 +1798,7 @@ export class Sim {
 					e.maxHp += 10;
 					e.hp += 10;
 				}
-				e.job = "build";
+				e.job = e.kind === "queen" ? "hold" : "build";
 				e.assignR = 0;
 			}
 		}
@@ -2654,18 +2665,14 @@ export class Sim {
 				x: this.rallyX,
 				y: this.rallyY
 			}, dt);
-		} else if (q.haul > 0 && q.haul >= this.haulCap(q) && q.job === "harvest") {
+		} else if (q.haul > 0 && q.haul >= this.haulCap(q, q.meat > 0) && q.job === "harvest") {
 			const n = this.nest();
 			if (n) this.seek(q, n, dt);
 			else this.hold(q, dt);
 		} else if (q.job === "harvest") {
 			this.queenForage(q, dt);
-		} else if (q.job === "hold" || q.job === "none") {
+		} else if (q.job === "hold" || q.job === "none" || q.job === "build") {
 			this.hold(q, dt);
-		} else if (q.job === "build") {
-			const n = this.nest();
-			if (n && Math.hypot(q.x - n.x, q.y - n.y) > 70) this.seek(q, n, dt);
-			else this.hold(q, dt);
 		} else if (q.job === "guard") {
 			const n = this.nest();
 			const foe = n ? this.closestHostile(n, NEST_PERIM + 40) : this.closestHostile(q, 180);
@@ -2729,15 +2736,16 @@ export class Sim {
 		}
 	}
 	queenGather(q: Ent) {
-		const cap = this.haulCap(q);
-		if (q.haul >= cap) return;
+		const foodLoad = q.haul > 0 ? q.meat > 0 : true;
+		const cap = this.haulCap(q, foodLoad);
+		if (q.haul >= cap && foodLoad === (q.meat > 0)) return;
 		for (const o of this.ents) {
 			if (!o.alive || !this.yieldKind(o)) continue;
 			if ((o.meat || 0) <= 0 && (o.haul || 0) <= 0) continue;
 			if (Math.hypot(q.x - o.x, q.y - o.y) > q.r + o.r + 18) continue;
 			const food = o.meat > 0;
 			if (q.haul > 0 && Boolean(q.meat) !== food) continue;
-			const room = cap - q.haul;
+			const room = this.haulCap(q, food) - q.haul;
 			const take = Math.min(room, food ? o.meat : o.haul || 4);
 			if (take <= 0) continue;
 			if (food) {
@@ -2995,8 +3003,9 @@ export class Sim {
 		}
 	}
 	takeYield(e: Ent, node: Ent) {
-		const store = node.meat > 0 ? node.meat : node.haul;
-		const take = Math.min(this.haulCap(e), store || 4);
+		const food = node.meat > 0;
+		const store = food ? node.meat : node.haul;
+		const take = Math.min(this.haulCap(e, food), store || 4);
 		if (node.meat > 0) {
 			node.meat -= take;
 			e.haul = take + (e.transCap > 0 ? 4 : 0);

@@ -819,7 +819,7 @@ export class Sim {
 			if (e.kind === "queen" && e.stage === "adult") u += UPKEEP_RATES.queen;
 			else if (e.kind === "queen") u += UPKEEP_RATES.teen;
 			else if (e.caste === "worker") {
-				u += e.evo === "harvester" ? UPKEEP_RATES.harvester : e.evo === "builder" ? UPKEEP_RATES.builder : UPKEEP_RATES.worker;
+				u += e.evo === "harvester" ? UPKEEP_RATES.harvester : e.evo === "engineer" ? UPKEEP_RATES.engineer : e.evo === "builder" ? UPKEEP_RATES.builder : UPKEEP_RATES.worker;
 			} else if (e.evo === "tank") u += UPKEEP_RATES.tank;
 			else if (e.evo === "siege") u += UPKEEP_RATES.siege;
 			else if (e.caste === "defender") u += UPKEEP_RATES.defender;
@@ -831,7 +831,7 @@ export class Sim {
 	unitUpkeep(e: Ent) {
 		if (e.kind === "queen" && e.stage === "adult") return UPKEEP_RATES.queen;
 		if (e.kind === "queen") return UPKEEP_RATES.teen;
-		if (e.caste === "worker") return e.evo === "harvester" ? UPKEEP_RATES.harvester : e.evo === "builder" ? UPKEEP_RATES.builder : UPKEEP_RATES.worker;
+		if (e.caste === "worker") return e.evo === "harvester" ? UPKEEP_RATES.harvester : e.evo === "engineer" ? UPKEEP_RATES.engineer : e.evo === "builder" ? UPKEEP_RATES.builder : UPKEEP_RATES.worker;
 		if (e.evo === "tank") return UPKEEP_RATES.tank + (e.winged ? UPKEEP_RATES.air : 0);
 		if (e.evo === "siege") return UPKEEP_RATES.siege + (e.winged ? UPKEEP_RATES.air : 0);
 		if (e.caste === "defender") return UPKEEP_RATES.defender + (e.winged ? UPKEEP_RATES.air : 0);
@@ -1237,14 +1237,17 @@ export class Sim {
 	}
 	tickHomeRegen(dt: number) {
 		this.homeRegen += dt;
-		if (this.homeRegen < 6.5) return;
+		if (this.homeRegen < 2.2) return;
 		this.homeRegen = 0;
 		for (const e of this.ents) {
-			if (!e.alive || e.site !== "home") continue;
-			if (e.kind === "fruit" || e.kind === "node") {
-				if (e.meat < e.maxHp) e.meat = Math.min(e.maxHp, e.meat + this.yieldAmt(3));
-			} else if (e.kind === "scrap" || e.kind === "solar") {
-				if (e.haul < e.maxHp) e.haul = Math.min(e.maxHp, e.haul + this.yieldAmt(2));
+			if (!e.alive || !this.yieldKind(e)) continue;
+			if (e.site === "unique") continue;
+			if (e.site !== "home" && !this.inPerim(e.x, e.y)) continue;
+			const cap = Math.max(e.maxHp, 12);
+			if (e.kind === "fruit" || e.kind === "node" || e.kind === "pickup" || e.kind === "cocoon" || e.meat > 0 && e.kind === "loot") {
+				if (e.meat < cap) e.meat = Math.min(cap, e.meat + this.yieldAmt(4));
+			} else if (e.kind === "scrap" || e.kind === "solar" || e.kind === "battery") {
+				if (e.haul < cap) e.haul = Math.min(cap, e.haul + this.yieldAmt(3));
 			}
 		}
 	}
@@ -1296,15 +1299,16 @@ export class Sim {
 		void dt;
 		for (const tw of this.ents) {
 			if (!tw.alive || tw.kind !== "tower") continue;
-			if (tw.evo !== "electric" && tw.evo !== "siegehold") continue;
+			if (tw.dmg <= 0 && tw.evo !== "electric" && tw.evo !== "siegehold") continue;
 			if (!this.silkPowered(tw.id)) continue;
 			if (tw.cd > 0) continue;
+			const sting = Math.max(4, tw.dmg || 7);
 			let hit = false;
 			for (const o of this.ents) {
 				if (!o.alive || !isHostile("spider", o.faction)) continue;
 				if (!COMBAT.includes(o.kind)) continue;
 				if (Math.hypot(o.x - tw.x, o.y - tw.y) < tw.r + o.r + 10) {
-					this.hit(o, 7, tw, "#b7c96a");
+					this.hit(o, sting, tw, "#b7c96a");
 					hit = true;
 				}
 			}
@@ -1316,7 +1320,7 @@ export class Sim {
 				for (const o of this.ents) {
 					if (!o.alive || !isHostile("spider", o.faction) || !COMBAT.includes(o.kind)) continue;
 					if (this.distToSeg(o.x, o.y, a.x, a.y, b.x, b.y) < 12) {
-						this.hit(o, 5, tw, "#e8ebe4");
+						this.hit(o, Math.max(3, sting * 0.7), tw, "#e8ebe4");
 						hit = true;
 					}
 				}
@@ -1785,17 +1789,80 @@ export class Sim {
 		this.bakeNav();
 		this.pop(b.x, b.y - 24, "Tower", "#e8ebe4");
 	}
+	isBuilder(e: Ent) {
+		return e.caste === "worker" && (e.evo === "builder" || e.evo === "engineer");
+	}
+	fortifyCost(tw: Ent) {
+		return this.matPrice(3 + tw.evoHp * 2);
+	}
+	tryRemoveTower() {
+		const builder = this.selection().find((e) => this.isBuilder(e))
+			?? this.ents.find((e) => e.alive && this.isBuilder(e) && e.job !== "hold")
+			?? this.ents.find((e) => e.alive && this.isBuilder(e));
+		if (!builder) {
+			this.note("Need a builder to pull a post.");
+			return;
+		}
+		let tw = this.selection().find((e) => e.kind === "tower");
+		if (!tw) tw = this.find(this.selectedId)?.kind === "tower" ? this.find(this.selectedId) : undefined;
+		if (!tw) {
+			let best = Infinity;
+			for (const e of this.ents) {
+				if (!e.alive || e.kind !== "tower") continue;
+				const d = dist2(builder, e);
+				if (d < best) {
+					best = d;
+					tw = e;
+				}
+			}
+		}
+		if (!tw) {
+			this.note("No tower to pull.");
+			return;
+		}
+		const refund = Math.max(1, Math.floor(this.towerCost() / 2 + tw.evoHp * 2));
+		this.gainMat(refund);
+		tw.alive = false;
+		this.pruneSilk();
+		this.bakeNav();
+		this.pop(tw.x, tw.y - 20, `+${refund}m`, "#e8ebe4");
+		this.note("The post is pulled. Silk that hung from it goes dark.");
+	}
+	holdBuilders() {
+		let n = 0;
+		for (const e of this.ents) {
+			if (!e.alive || !this.isBuilder(e)) continue;
+			e.job = "hold";
+			this.routes.delete(e.id);
+			n++;
+		}
+		this.marking = false;
+		this.note(n ? `${n} builders hold. Repairs and upgrades pause.` : "No builders to hold.");
+	}
+	fortifyTower(tw: Ent, who: Ent) {
+		const cost = this.fortifyCost(tw);
+		if (!this.spendMat(cost)) return false;
+		tw.evoHp += 1;
+		tw.maxHp += 40;
+		tw.hp += 40;
+		tw.dmg = Math.max(tw.dmg, 4) + 3;
+		tw.draw += 4;
+		who.skill += 1;
+		this.pop(tw.x, tw.y - 22, "Fortify", "#b7c96a");
+		this.note("Engineer hardens the post. It bites anything that strikes it or walks the silk.");
+		return true;
+	}
 	selectedBuilder() {
 		for (const id of this.selectedIds.length ? this.selectedIds : [this.selectedId]) {
 			const e = this.find(id);
-			if (e && e.alive && e.caste === "worker" && e.evo === "builder") return e;
+			if (e && e.alive && this.isBuilder(e)) return e;
 			if (e && e.alive && e.kind === "queen") return e;
 		}
-		return undefined;
+		return this.ents.find((e) => e.alive && this.isBuilder(e) && e.job === "build");
 	}
 	bestBuilderSkill() {
 		let s = 0;
-		for (const e of this.ents) if (e.alive && e.evo === "builder") s = Math.max(s, e.skill);
+		for (const e of this.ents) if (e.alive && this.isBuilder(e)) s = Math.max(s, e.skill);
 		return s;
 	}
 	tryLink(): "spliced" | "blocked" | "none" {
@@ -1861,6 +1928,7 @@ export class Sim {
 		for (const e of targets) {
 			if (e.hibernating) continue;
 			if (kind === "harvester") {
+				if (this.isBuilder(e)) continue;
 				if (e.caste === "worker" && e.evo !== "harvester") {
 					e.evo = "harvester";
 					e.evoSpd += 1;
@@ -1870,7 +1938,7 @@ export class Sim {
 				e.job = "harvest";
 				e.assignR = 0;
 			} else {
-				if (e.caste === "worker" && e.evo !== "builder") {
+				if (e.caste === "worker" && e.evo !== "builder" && e.evo !== "engineer") {
 					e.evo = "builder";
 					e.maxHp += 10;
 					e.hp += 10;
@@ -1880,7 +1948,7 @@ export class Sim {
 			}
 		}
 		this.marking = false;
-		this.note(kind === "harvester" ? "Harvesting the silk net. Mark a patch to send them farther." : "Building. Raise a post, or they repair the hollow.");
+		this.note(kind === "harvester" ? "Harvesting the silk net until the ring is stripped." : "Building. They repair, and engineers fortify, until you Hold them.");
 	}
 	assignAttacker(job: Job) {
 		this.assignDuty(job);
@@ -2183,11 +2251,18 @@ export class Sim {
 			e.maxHp += 10;
 			if (e.winged) this.grantTransporters();
 		}
+		if (evo === "engineer") {
+			e.job = "build";
+			e.maxHp += 16;
+			e.hp += 16;
+			e.skill += 1;
+			e.draw += 4;
+		}
 		this.pop(e.x, e.y, opt.label, "#b7c96a");
 		return true;
 	}
 	grantTransporters() {
-		const builders = this.ents.filter((e) => e.alive && e.caste === "worker" && e.evo === "builder" && e.winged);
+		const builders = this.ents.filter((e) => e.alive && e.caste === "worker" && this.isBuilder(e) && e.winged);
 		if (!builders.length) return;
 		const cap = 8 + builders.length * 6;
 		for (const h of this.ents) {
@@ -2207,17 +2282,23 @@ export class Sim {
 		}
 		if (e.caste === "worker") {
 			const out = [];
-			if (e.evo !== "builder") out.push({
+			if (e.evo !== "builder" && e.evo !== "engineer") out.push({
 				id: "builder",
 				label: "Builder",
 				costF: 0,
 				costM: 0
 			});
-			if (e.evo !== "harvester") out.push({
+			if (e.evo !== "harvester" && e.evo !== "engineer") out.push({
 				id: "harvester",
 				label: "Harvester",
 				costF: 0,
 				costM: 0
+			});
+			if (e.evo === "builder") out.push({
+				id: "engineer",
+				label: "Engineer",
+				costF: this.foodPrice(6),
+				costM: this.matPrice(4),
 			});
 			if (!e.winged) out.push({
 				id: "air",
@@ -2274,7 +2355,7 @@ export class Sim {
 			.filter((e) => e.alive && e.caste === "worker")
 			.map((e) => ({
 				id: e.id,
-				label: e.evo === "harvester" ? `Harvester ${e.id}` : e.evo === "builder" ? `Builder ${e.id}` : `Worker ${e.id}`,
+				label: e.evo === "harvester" ? `Harvester ${e.id}` : e.evo === "engineer" ? `Engineer ${e.id}` : e.evo === "builder" ? `Builder ${e.id}` : `Worker ${e.id}`,
 				busy: e.job === "harvest" && (e.assignR > 0 || e.haul > 0) || e.evo === "builder" && e.job === "build",
 			}));
 	}
@@ -2288,6 +2369,8 @@ export class Sim {
 				out.push(this.opt("hold", "Hold", "order", true, ""));
 				out.push(this.opt("harvest", "Harvest", "order", true, ""));
 				out.push(this.opt("builder", "Build", "order", true, ""));
+				out.push(this.opt("hold-builders", "Hold builders", "order", true, ""));
+				out.push(this.opt("remove-tower", "Pull tower", "build", this.ents.some((t) => t.alive && t.kind === "tower"), "No towers to pull."));
 			}
 			if (list.some((e) => e.kind === "queen" || e.caste === "attacker" || e.caste === "defender")) {
 				out.push(this.opt("hold", "Hold", "order", true, ""));
@@ -2344,8 +2427,8 @@ export class Sim {
 			const costE = this.electricCost();
 			const costS = this.siegeholdCost();
 			const skill = this.bestBuilderSkill();
-			out: {
-				const out: CommandOpt[] = [
+			const hasBuilder = Boolean(this.ents.find((w) => w.alive && this.isBuilder(w)));
+			const out: CommandOpt[] = [
 					this.opt(
 						"electric",
 						"Electric evo",
@@ -2371,9 +2454,15 @@ export class Sim {
 						e.evo === "siegehold" && Boolean(this.ents.find((a) => a.alive && a.caste === "attacker")),
 						e.evo !== "siegehold" ? "Upgrade to a siege nest first." : "No attackers to station.",
 					),
+					this.opt(
+						"remove-tower",
+						"Pull tower",
+						"build",
+						hasBuilder,
+						hasBuilder ? "" : "Need a builder to pull the post.",
+					),
 				];
 				return out;
-			}
 		}
 		if (e.kind === "hive") {
 			const open = this.hiveOpen(e);
@@ -2392,6 +2481,7 @@ export class Sim {
 				this.opt("hold", "Hold", "order", true, ""),
 				this.opt("harvest", "Harvest", "order", true, ""),
 				this.opt("builder", "Build", "order", true, ""),
+				this.opt("hold-builders", "Hold builders", "order", true, ""),
 				this.opt("guard", "Defend", "order", true, ""),
 				this.opt("rove", "Attack", "order", true, ""),
 				this.opt("mark", "Mark patch", "order", true, ""),
@@ -2418,17 +2508,25 @@ export class Sim {
 		if (e.caste === "worker") {
 			const out: CommandOpt[] = [
 				this.opt("hold", "Hold", "order", true, ""),
-				this.opt("harvest", "Harvester", "order", e.evo !== "builder", e.evo === "builder" ? "This brood is a builder." : ""),
+				this.opt("harvest", "Harvester", "order", !this.isBuilder(e), this.isBuilder(e) ? "This brood builds." : ""),
 				this.opt("builder", "Builder", "order", true, ""),
+				this.opt("hold-builders", "Hold builders", "order", this.isBuilder(e) || e.kind === "queen", "Toggle builders first."),
 				this.opt("mark", "Mark patch", "order", e.evo === "harvester" || e.job === "harvest", "Assign as harvester first."),
 				this.opt(
 					"raise-tower",
 					"Raise tower",
 					"build",
-					e.evo === "builder" && mat >= this.towerCost(),
-					e.evo !== "builder" ? "Assign as builder first." : `Need ${this.towerCost()} material.`,
+					this.isBuilder(e) && mat >= this.towerCost(),
+					!this.isBuilder(e) ? "Assign as builder first." : `Need ${this.towerCost()} material.`,
 					0,
 					this.towerCost(),
+				),
+				this.opt(
+					"remove-tower",
+					"Pull tower",
+					"build",
+					this.isBuilder(e) && this.ents.some((t) => t.alive && t.kind === "tower"),
+					!this.isBuilder(e) ? "Assign as builder first." : "No towers to pull.",
 				),
 			];
 			for (const ev of this.evoFor(e)) {
@@ -2483,6 +2581,8 @@ export class Sim {
 		else if (id === "mark") this.beginMarkHarvest();
 		else if (id === "follow") this.assignAttacker("follow");
 		else if (id === "hold") this.assignHold();
+		else if (id === "hold-builders") this.holdBuilders();
+		else if (id === "remove-tower") this.tryRemoveTower();
 		else if (id === "rove") this.assignDuty("rove");
 		else if (id === "guard") this.assignDuty("guard");
 		else if (id === "raise-tower") this.tryBuildTower();
@@ -2504,7 +2604,7 @@ export class Sim {
 			return;
 		}
 		if (!w || w.caste !== "worker") return;
-		if (w.evo === "builder") {
+		if (w.evo === "builder" || w.evo === "engineer") {
 			this.note("Builders do not harvest.");
 			return;
 		}
@@ -2995,12 +3095,33 @@ export class Sim {
 	aiWorker(e: Ent, dt: number) {
 		const n = this.nest();
 		if (!n) return;
+		if (e.job === "hold") {
+			this.hold(e, dt);
+			this.routes.delete(e.id);
+			return;
+		}
+		if (this.isBuilder(e)) {
+			this.aiBuilder(e, dt, n);
+			return;
+		}
 		if (e.haul > 0) {
+			const foodLoad = e.meat > 0;
+			const cap = this.haulCap(e, foodLoad);
+			const node = e.assignR > 0 ? this.closestYield(e, e.assignX, e.assignY, e.assignR) : this.closestYieldInNet(e);
+			const sameKind = node && (foodLoad ? node.meat > 0 : (node.haul || 0) > 0 && node.meat <= 0);
+			if (e.haul < cap - 0.2 && sameKind) {
+				this.routeTo(e, node!.x, node!.y, dt);
+				if (Math.hypot(e.x - node!.x, e.y - node!.y) < 32) {
+					this.hold(e, dt);
+					this.siphonYield(e, node!, dt);
+				}
+				return;
+			}
 			this.routeTo(e, n.x, n.y, dt);
 			if (Math.hypot(e.x - n.x, e.y - n.y) < 70) {
 				if (e.meat > 0) this.gainFood(e.haul);
 				else this.gainMat(e.haul);
-				this.pop(n.x, n.y - 30, `+${e.haul}`, "#e8ebe4");
+				this.pop(n.x, n.y - 30, `+${Math.round(e.haul)}`, "#e8ebe4");
 				e.haul = 0;
 				e.targetId = 0;
 				e.foodMeter = e.foodMax;
@@ -3008,16 +3129,12 @@ export class Sim {
 				if (e.assignR > 0 && !this.patchHasYield(e)) {
 					e.assignR = 0;
 					this.routes.delete(e.id);
-					this.note("Patch stripped. Harvester is home.");
+					this.note("Patch stripped. Harvester works the silk ring.");
 				}
 			}
 			return;
 		}
-		if (e.evo === "builder") {
-			this.aiBuilder(e, dt, n);
-			return;
-		}
-		if (e.job === "hold" || e.job === "none") {
+		if (e.job === "none") {
 			this.hold(e, dt);
 			this.routes.delete(e.id);
 			return;
@@ -3038,7 +3155,7 @@ export class Sim {
 			return;
 		}
 		let node = e.assignR > 0 ? this.closestYield(e, e.assignX, e.assignY, e.assignR) : this.closestYieldInNet(e);
-		if (!node && tgt) node = tgt;
+		if (!node && tgt && this.yieldKind(tgt) && ((tgt.meat || 0) > 0 || (tgt.haul || 0) > 0)) node = tgt;
 		if (!node) {
 			if (Math.hypot(e.x - n.x, e.y - n.y) > 90) this.routeTo(e, n.x, n.y, dt);
 			else {
@@ -3049,9 +3166,18 @@ export class Sim {
 		}
 		e.targetId = node.id;
 		this.routeTo(e, node.x, node.y, dt);
-		if (Math.hypot(e.x - node.x, e.y - node.y) < 28) this.takeYield(e, node);
+		if (Math.hypot(e.x - node.x, e.y - node.y) < 32) {
+			this.hold(e, dt);
+			this.siphonYield(e, node, dt);
+		}
 	}
 	aiBuilder(e: Ent, dt: number, n: Ent) {
+		if (e.job === "hold") {
+			this.hold(e, dt);
+			this.routes.delete(e.id);
+			return;
+		}
+		e.job = "build";
 		const dmg = this.ents
 			.filter((o) => o.alive && (o.kind === "nest" || o.kind === "tower") && o.hp < o.maxHp - 1)
 			.sort((a, b) => {
@@ -3060,47 +3186,100 @@ export class Sim {
 				return Math.hypot(a.x - n.x, a.y - n.y) - Math.hypot(b.x - n.x, b.y - n.y);
 			});
 		const t = dmg[0];
-		if (!t) {
-			if (Math.hypot(e.x - n.x, e.y - n.y) > 80) this.routeTo(e, n.x, n.y, dt);
-			else {
-				this.routes.delete(e.id);
+		if (t) {
+			this.routeTo(e, t.x, t.y, dt);
+			if (Math.hypot(e.x - t.x, e.y - t.y) < 36) {
+				t.hp = Math.min(t.maxHp, t.hp + 18 * dt);
+				if (t.hp >= t.maxHp - 0.2) {
+					e.skill += 1;
+					this.pop(t.x, t.y - 20, "Repaired", "#e8ebe4");
+				}
 				this.hold(e, dt);
 			}
 			return;
 		}
-		e.job = "build";
-		this.routeTo(e, t.x, t.y, dt);
-		if (Math.hypot(e.x - t.x, e.y - t.y) < 36) {
-			t.hp = Math.min(t.maxHp, t.hp + 18 * dt);
-			if (t.hp >= t.maxHp - 0.2) {
-				e.skill += 1;
-				this.pop(t.x, t.y - 20, "Repaired", "#e8ebe4");
+		if (e.evo === "engineer") {
+			let tw: Ent | undefined;
+			let best = Infinity;
+			for (const o of this.ents) {
+				if (!o.alive || o.kind !== "tower" || !this.silkPowered(o.id)) continue;
+				if (o.evoHp >= 4) continue;
+				if (this.material < this.fortifyCost(o)) continue;
+				const d = dist2(e, o);
+				if (d < best) {
+					best = d;
+					tw = o;
+				}
 			}
+			if (tw) {
+				this.routeTo(e, tw.x, tw.y, dt);
+				if (Math.hypot(e.x - tw.x, e.y - tw.y) < 36) {
+					this.hold(e, dt);
+					if (e.cd <= 0) {
+						if (this.fortifyTower(tw, e)) e.cd = 1.2;
+					}
+				}
+				return;
+			}
+		}
+		if (Math.hypot(e.x - n.x, e.y - n.y) > 80) this.routeTo(e, n.x, n.y, dt);
+		else {
+			this.routes.delete(e.id);
 			this.hold(e, dt);
 		}
+	}
+	siphonYield(e: Ent, node: Ent, dt: number) {
+		const food = node.meat > 0;
+		if (e.haul > 0 && food !== (e.meat > 0)) return;
+		const store = food ? node.meat : node.haul;
+		const cap = this.haulCap(e, food);
+		const room = cap - e.haul;
+		if (store <= 0 || room <= 0) return;
+		const rate = food ? 16 : 10;
+		const take = Math.min(room, store, rate * dt);
+		if (take <= 0) return;
+		if (food) {
+			node.meat -= take;
+			e.meat = 1;
+		} else {
+			node.haul = Math.max(0, node.haul - take);
+			e.meat = 0;
+		}
+		e.haul += take;
+		if (e.cd <= 0) {
+			this.pop(node.x, node.y - 18, food ? `+${Math.max(1, Math.round(take * 4))}f` : `+${Math.max(1, Math.round(take * 4))}m`, food ? "#b7c96a" : "#e8ebe4");
+			e.cd = 0.4;
+			this.audio?.deposit();
+		}
+		this.clearEmptyYield(node);
 	}
 	takeYield(e: Ent, node: Ent) {
 		const food = node.meat > 0;
 		const store = food ? node.meat : node.haul;
-		const take = Math.min(this.haulCap(e, food), store || 4);
+		const take = Math.min(this.haulCap(e, food) - e.haul, store || 4);
+		if (take <= 0) return;
 		if (node.meat > 0) {
 			node.meat -= take;
-			e.haul = take + (e.transCap > 0 ? 4 : 0);
-			e.meat = take;
+			e.haul += take;
+			e.meat = 1;
 		} else {
 			node.haul = Math.max(0, node.haul - take);
-			e.haul = take;
+			e.haul += take;
 			e.meat = 0;
 		}
 		e.targetId = 0;
+		this.clearEmptyYield(node);
+	}
+	clearEmptyYield(node: Ent) {
 		const empty = node.meat <= 0 && node.haul <= 0;
-		if (empty && node.site === "home") return;
-		if (empty && node.site === "unique") {
+		if (!empty) return;
+		if (node.site === "home" || this.inPerim(node.x, node.y)) return;
+		if (node.site === "unique") {
 			node.buried = Math.max(node.buried, 0.8);
 			node.meat = 0;
 			return;
 		}
-		if (empty && (node.kind === "pickup" || node.kind === "cocoon" || node.kind === "scrap" || node.kind === "loot" || node.kind === "fruit" || node.kind === "node")) node.alive = false;
+		if (node.kind === "pickup" || node.kind === "cocoon" || node.kind === "scrap" || node.kind === "loot" || node.kind === "fruit" || node.kind === "node") node.alive = false;
 	}
 	yieldKind(o: Ent) {
 		return o.kind === "node" || o.kind === "pickup" || o.kind === "cocoon" || o.kind === "fruit" || o.kind === "scrap" || o.kind === "solar" || o.kind === "battery" || o.kind === "loot";
@@ -3108,10 +3287,15 @@ export class Sim {
 	closestYieldInNet(e: Ent) {
 		let node;
 		let best = Infinity;
+		const foodFull = this.food >= this.cap("food") - 0.4;
+		const matFull = this.material >= this.cap("material") - 0.4;
 		for (const o of this.ents) {
 			if (!o.alive || !this.yieldKind(o)) continue;
 			if ((o.meat || 0) <= 0 && (o.haul || 0) <= 0) continue;
 			if (!this.inPerim(o.x, o.y)) continue;
+			const food = o.meat > 0;
+			if (food && foodFull) continue;
+			if (!food && matFull) continue;
 			if (this.claimedYield(o.id, e.id)) continue;
 			const d = dist2(e, o);
 			if (d < best) {
@@ -3140,6 +3324,9 @@ export class Sim {
 		return node;
 	}
 	claimedYield(nodeId: number, selfId: number) {
+		const node = this.find(nodeId);
+		const store = node ? Math.max(node.meat || 0, node.haul || 0) : 0;
+		if (store > this.tune().gather * 5) return false;
 		for (const w of this.ents) {
 			if (!w.alive || w.id === selfId || w.caste !== "worker") continue;
 			if (w.haul > 0) continue;
@@ -3358,6 +3545,10 @@ export class Sim {
 		this.pop(target.x, target.y - 16, `${Math.round(dmg)}`, color);
 		this.shake(target.kind === "queen" || target.kind === "nest" ? .24 : .1);
 		if (target.kind === "nest") this.nestAlarm = 8;
+		if (target.kind === "tower" && from && from.kind !== "tower" && isHostile(from.faction, "spider") && target.dmg > 0 && this.silkPowered(target.id) && target.cd <= 0) {
+			target.cd = 0.35;
+			this.hit(from, target.dmg, target, "#b7c96a");
+		}
 		if (target.hp <= 0) this.kill(target, from);
 	}
 	kill(target: Ent, from: Ent | null) {

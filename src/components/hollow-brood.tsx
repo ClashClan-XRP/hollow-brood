@@ -979,7 +979,7 @@ function AssignPanel({
         )}
         {tab === "orders" && (
           <div>
-            <p className="text-xs text-muted">{picked.length ? `${picked.length} ready for orders` : "Toggle units first, then pick Hold, Harvest, or Follow."}</p>
+            <p className="text-xs text-muted">{picked.length ? `${picked.length} ready for orders` : "Toggle units first, then pick Hold, Harvest, or Build."}</p>
             <p className="mt-3 text-xs font-medium uppercase tracking-[0.16em] text-muted">Orders</p>
             <div className="mt-2 grid grid-cols-3 gap-2">
               {orders.length === 0 && <p className="col-span-3 text-xs text-muted">Toggle at least one unit.</p>}

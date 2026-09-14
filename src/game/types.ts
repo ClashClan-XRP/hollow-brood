@@ -24,6 +24,7 @@ export const UPKEEP_RATES = {
   worker: 0.07,
   harvester: 0.09,
   builder: 0.09,
+  engineer: 0.12,
   defender: 0.2,
   attacker: 0.26,
   tank: 0.48,
@@ -76,6 +77,7 @@ export type Evo =
   | "air"
   | "harvester"
   | "builder"
+  | "engineer"
   | "electric"
   | "siegehold"
   | "none";

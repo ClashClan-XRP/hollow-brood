@@ -304,8 +304,9 @@ export function render(
         break;
       case "fruit": {
         drawProp(ctx, sprites.tree, e.x, e.y - 22, e.draw * 0.85, e.draw);
+        const berries = Math.min(6, Math.ceil(e.meat / 4));
         ctx.fillStyle = "#c45c4c";
-        for (let i = 0; i < Math.min(6, Math.max(1, Math.ceil(e.meat / 4))); i++) {
+        for (let i = 0; i < berries; i++) {
           const a = i * 1.1 + e.age * 0.2;
           ctx.beginPath();
           ctx.arc(e.x + Math.cos(a) * 14, e.y - 18 + Math.sin(a * 1.3) * 10, 4, 0, Math.PI * 2);
@@ -436,7 +437,7 @@ export function render(
           drawProp(ctx, sprites.cocoon, e.x, e.y, e.draw, e.draw);
           break;
         }
-        if (e.caste === "worker") ctx.filter = "sepia(0.45) saturate(0.85)";
+        if (e.caste === "worker") ctx.filter = e.evo === "engineer" ? "hue-rotate(18deg) saturate(1.05)" : "sepia(0.45) saturate(0.85)";
         else if (e.caste === "defender") ctx.filter = "hue-rotate(48deg) saturate(0.8)";
         if (e.hibernating) ctx.globalAlpha = 0.45;
         wings(ctx, e);
@@ -567,7 +568,7 @@ export function render(
       }
       case "tower": {
         drawProp(ctx, sprites.tower, e.x, e.y - 10, e.draw * 0.7, e.draw);
-        if (e.evo === "electric" || e.evo === "siegehold") {
+        if (e.evo === "electric" || e.evo === "siegehold" || e.dmg > 0) {
           ctx.strokeStyle = "rgba(183,201,106,0.55)";
           ctx.lineWidth = 2;
           ctx.beginPath();
@@ -590,7 +591,7 @@ export function render(
         ctx.font = "600 11px Figtree, sans-serif";
         ctx.textAlign = "center";
         ctx.fillStyle = e.linked ? "#c9d0c4" : "#c45c4c";
-        const tag = e.evo === "siegehold" ? "SIEGE" : e.evo === "electric" ? "VOLT" : e.linked ? (e.alert ? "ALERT" : "NET") : "MUTE";
+        const tag = e.evo === "siegehold" ? "SIEGE" : e.evo === "electric" ? "VOLT" : e.dmg > 0 ? "FORT" : e.linked ? (e.alert ? "ALERT" : "NET") : "MUTE";
         ctx.fillText(tag, e.x, e.y + 36);
         break;
       }

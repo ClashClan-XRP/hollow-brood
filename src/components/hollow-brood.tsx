@@ -6,7 +6,7 @@ import { loadAssets, type SpriteBook } from "@/game/assets";
 import { Input } from "@/game/input";
 import { render, renderMinimap, screenToWorld, viewWorldSize } from "@/game/render";
 import { Sim } from "@/game/sim";
-import { DIFFICULTIES, FIXED_DT, WORLD_H, WORLD_W, type Caste, type CommandOpt, type Difficulty, type Evo, type HudSnap, type RoomType } from "@/game/types";
+import { DIFFICULTIES, FIXED_DT, WORLD_H, WORLD_W, type CommandOpt, type Difficulty, type Evo, type HudSnap, type RoomType } from "@/game/types";
 import { cn } from "@/lib/utils";
 
 function emptyHud(): HudSnap {
@@ -64,6 +64,7 @@ function emptyHud(): HudSnap {
     builderSel: false,
     hiveName: "",
     units: [],
+    eggs: [],
     orders: [],
   };
 }
@@ -80,7 +81,7 @@ export function HollowBrood() {
   const [loadError, setLoadError] = useState("");
   const [hud, setHud] = useState<HudSnap>(emptyHud);
   const [assignOpen, setAssignOpen] = useState(false);
-  const [casteFilter, setCasteFilter] = useState<"all" | Caste>("all");
+  const [assignTab, setAssignTab] = useState<"eggs" | "units" | "orders">("units");
   const hudTimer = useRef(0);
 
   useEffect(() => {
@@ -316,7 +317,7 @@ export function HollowBrood() {
     audioRef.current.unlock();
     simRef.current.reset(difficulty);
     setAssignOpen(false);
-    setCasteFilter("all");
+    setAssignTab("units");
     setHud(simRef.current.hud());
   }
 
@@ -384,9 +385,9 @@ export function HollowBrood() {
             setHud(simRef.current.hud());
           }}
           assignOpen={assignOpen}
-          casteFilter={casteFilter}
+          assignTab={assignTab}
           onAssign={() => setAssignOpen(true)}
-          onFilter={setCasteFilter}
+          onTab={setAssignTab}
           onCloseAssign={() => setAssignOpen(false)}
           onDeselect={() => {
             simRef.current.deselect();
@@ -527,9 +528,9 @@ function Hud({
   onDeselect,
   onToggleUnit,
   assignOpen,
-  casteFilter,
+  assignTab,
   onAssign,
-  onFilter,
+  onTab,
   onCloseAssign,
 }: {
   hud: HudSnap;
@@ -543,9 +544,9 @@ function Hud({
   onDeselect: () => void;
   onToggleUnit: (id: number) => void;
   assignOpen: boolean;
-  casteFilter: "all" | Caste;
+  assignTab: "eggs" | "units" | "orders";
   onAssign: () => void;
-  onFilter: (c: "all" | Caste) => void;
+  onTab: (t: "eggs" | "units" | "orders") => void;
   onCloseAssign: () => void;
 }) {
   return (
@@ -620,8 +621,8 @@ function Hud({
       {assignOpen && (
         <AssignPanel
           hud={hud}
-          filter={casteFilter}
-          onFilter={onFilter}
+          tab={assignTab}
+          onTab={onTab}
           onToggle={onToggleUnit}
           onCommand={onCommand}
           onClose={onCloseAssign}
@@ -883,27 +884,25 @@ function CommandBar({
 
 function AssignPanel({
   hud,
-  filter,
-  onFilter,
+  tab,
+  onTab,
   onToggle,
   onCommand,
   onClose,
 }: {
   hud: HudSnap;
-  filter: "all" | Caste;
-  onFilter: (c: "all" | Caste) => void;
+  tab: "eggs" | "units" | "orders";
+  onTab: (t: "eggs" | "units" | "orders") => void;
   onToggle: (id: number) => void;
   onCommand: (id: string) => void;
   onClose: () => void;
 }) {
-  const tabs: { id: "all" | Caste; label: string }[] = [
-    { id: "all", label: "All" },
-    { id: "queen", label: "Queen" },
-    { id: "worker", label: "Workers" },
-    { id: "attacker", label: "Attackers" },
-    { id: "defender", label: "Defenders" },
+  const tabs: { id: "eggs" | "units" | "orders"; label: string }[] = [
+    { id: "eggs", label: `Eggs ${hud.eggs.length}` },
+    { id: "units", label: "Units" },
+    { id: "orders", label: "Orders" },
   ];
-  const units = hud.units.filter((u) => filter === "all" || u.caste === filter);
+  const units = hud.units.filter((u) => true);
   const picked = hud.units.filter((u) => u.selected);
   const orders = (hud.orders.length ? hud.orders : hud.ally?.commands ?? []).filter((c) => c.group === "order" || c.group === "build");
   const evos = (hud.orders.length ? hud.orders : hud.ally?.commands ?? []).filter((c) => c.group === "evo");
@@ -916,7 +915,7 @@ function AssignPanel({
         <List className="size-5 text-accent" />
         <p className="font-display text-xl tracking-tight">Assign</p>
         <p className="text-xs text-muted">
-          {picked.length ? `${picked.length} toggled` : "Toggle brood, then order or evo"}
+          {picked.length ? `${picked.length} toggled` : "Toggle units, then Orders"}
         </p>
         <button
           type="button"
@@ -932,10 +931,10 @@ function AssignPanel({
           <button
             key={t.id}
             type="button"
-            onClick={() => onFilter(t.id)}
+            onClick={() => onTab(t.id)}
             className={cn(
               "min-h-11 rounded-lg border px-3 text-xs font-medium",
-              filter === t.id ? "border-accent bg-surface-elevated text-foreground" : "border-border bg-bg text-muted",
+              tab === t.id ? "border-accent bg-surface-elevated text-foreground" : "border-border bg-bg text-muted",
             )}
           >
             {t.label}
@@ -943,48 +942,62 @@ function AssignPanel({
         ))}
       </div>
       <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1">
-        {units.length === 0 && (
-          <p className="text-xs text-muted">No brood in this caste yet. Lay eggs at the hollow.</p>
+        {tab === "eggs" && (
+          <div className="flex flex-col gap-2">
+            {hud.eggs.length === 0 && <p className="text-xs text-muted">No eggs in the hatchery. Lay from Orders when the queen is at the hollow.</p>}
+            {hud.eggs.map((e) => (
+              <div key={e.id} className="flex min-h-14 items-center justify-between rounded-lg border border-border bg-bg px-3 py-2">
+                <span className="font-medium capitalize">{e.label}</span>
+                <span className="text-xs tabular-nums text-muted">{Math.ceil(e.ttl)}s</span>
+              </div>
+            ))}
+          </div>
         )}
-        <div className="flex flex-col gap-2">
-          {units.map((u) => (
-            <button
-              key={u.id}
-              type="button"
-              onClick={() => onToggle(u.id)}
-              className={cn(
-                "flex min-h-14 items-center gap-3 rounded-lg border px-3 py-2 text-left",
-                u.selected ? "border-accent bg-surface-elevated" : "border-border bg-bg",
-              )}
-            >
-              <span className={cn("grid size-6 shrink-0 place-items-center rounded-md border text-xs", u.selected ? "border-accent text-accent" : "border-border text-muted")}>
-                {u.selected ? "●" : ""}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block font-medium capitalize">{u.label}{u.winged ? " · wings" : ""}</span>
-                <span className="text-xs capitalize text-muted">{u.job === "none" ? "idle" : u.job} · feed {u.food}/{u.foodMax}</span>
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="mt-3 border-t border-border pt-3">
-        <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted">Orders</p>
-        <div className="mt-2 grid grid-cols-3 gap-2">
-          {orders.length === 0 && <p className="col-span-3 text-xs text-muted">Toggle at least one unit.</p>}
-          {orders.map((c) => (
-            <CmdBtn key={c.id} c={c} onCommand={onCommand} />
-          ))}
-        </div>
-        {evos.length > 0 && (
-          <>
-            <p className="mt-3 text-xs font-medium uppercase tracking-[0.16em] text-muted">Evo path</p>
+        {tab === "units" && (
+          <div className="flex flex-col gap-2">
+            {units.length === 0 && <p className="text-xs text-muted">No brood yet. Lay eggs at the hollow.</p>}
+            {units.map((u) => (
+              <button
+                key={u.id}
+                type="button"
+                onClick={() => onToggle(u.id)}
+                className={cn(
+                  "flex min-h-14 items-center gap-3 rounded-lg border px-3 py-2 text-left",
+                  u.selected ? "border-accent bg-surface-elevated" : "border-border bg-bg",
+                )}
+              >
+                <span className={cn("grid size-6 shrink-0 place-items-center rounded-md border text-xs", u.selected ? "border-accent text-accent" : "border-border text-muted")}>
+                  {u.selected ? "●" : ""}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block font-medium capitalize">{u.label}{u.winged ? " · wings" : ""}</span>
+                  <span className="text-xs capitalize text-muted">{u.job === "none" ? "idle" : u.job} · feed {u.food}/{u.foodMax}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+        {tab === "orders" && (
+          <div>
+            <p className="text-xs text-muted">{picked.length ? `${picked.length} ready for orders` : "Toggle units first, then pick Hold, Harvest, or Follow."}</p>
+            <p className="mt-3 text-xs font-medium uppercase tracking-[0.16em] text-muted">Orders</p>
             <div className="mt-2 grid grid-cols-3 gap-2">
-              {evos.map((c) => (
+              {orders.length === 0 && <p className="col-span-3 text-xs text-muted">Toggle at least one unit.</p>}
+              {orders.map((c) => (
                 <CmdBtn key={c.id} c={c} onCommand={onCommand} />
               ))}
             </div>
-          </>
+            {evos.length > 0 && (
+              <>
+                <p className="mt-3 text-xs font-medium uppercase tracking-[0.16em] text-muted">Evo path</p>
+                <div className="mt-2 grid grid-cols-3 gap-2">
+                  {evos.map((c) => (
+                    <CmdBtn key={c.id} c={c} onCommand={onCommand} />
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
         )}
       </div>
     </div>

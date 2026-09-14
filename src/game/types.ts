@@ -67,7 +67,7 @@ export type Kind =
   | "loot";
 
 export type Caste = "worker" | "attacker" | "defender" | "queen" | "none";
-export type Job = "none" | "harvest" | "build" | "guard" | "rove" | "follow" | "hibernate" | "haul";
+export type Job = "none" | "harvest" | "build" | "guard" | "rove" | "follow" | "hibernate" | "haul" | "hold";
 export type Evo =
   | "biter"
   | "melee"
@@ -298,6 +298,13 @@ export type RosterSnap = {
   busy: boolean;
 };
 
+export type EggSnap = {
+  id: number;
+  label: string;
+  caste: Caste;
+  ttl: number;
+};
+
 export type UnitSnap = {
   id: number;
   label: string;
@@ -386,6 +393,7 @@ export type HudSnap = {
   builderSel: boolean;
   hiveName: string;
   units: UnitSnap[];
+  eggs: EggSnap[];
   orders: CommandOpt[];
 };
 

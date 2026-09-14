@@ -14,6 +14,7 @@ export const SILK_LINK_RANGE = 420;
 export const SILK_STAND = 78;
 export const SILK_COST = 2;
 export const HARVEST_R = 170;
+export const FEED_NEST_R = 78;
 
 /** Per-second food drain. Difficulty multiplies the total. */
 export const UPKEEP_RATES = {
@@ -307,6 +308,8 @@ export type UnitSnap = {
   maxHp: number;
   winged: boolean;
   selected: boolean;
+  food: number;
+  foodMax: number;
 };
 
 export type AllySnap = {
@@ -323,6 +326,8 @@ export type AllySnap = {
   skill: number;
   meat: number;
   unearthed: boolean;
+  food: number;
+  foodMax: number;
   commands: CommandOpt[];
   roster: RosterSnap[];
 };
@@ -414,6 +419,8 @@ export type SilkProbe = {
   harvestAt: (x: number, y: number) => boolean;
   clickFruit: () => boolean;
   pickAt: (x: number, y: number) => string;
+  starve: () => boolean;
+  dropKill: (x: number, y: number) => boolean;
   workerPath: () => { points: number; bends: number; gx: number; gy: number };
   splice: () => "spliced" | "blocked" | "none";
   teleportQueen: (x: number, y: number) => void;

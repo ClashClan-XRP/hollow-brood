@@ -218,6 +218,16 @@ export function HollowBrood() {
         const h = sim.pickClick(x, y);
         return h ? `${h.kind}:${h.id}` : "none";
       },
+      starve: () => {
+        for (const e of sim.ents) {
+          if (e.alive && e.faction === "spider" && (e.kind === "brood" || e.kind === "queen")) e.foodMeter = 6;
+        }
+        return true;
+      },
+      dropKill: (x: number, y: number) => {
+        sim.make("pickup", "none", x, y, { r: 10, hp: 1, maxHp: 1, speed: 0, meat: 5, draw: 20, ttl: 40 });
+        return true;
+      },
       workerPath: () => {
         const w = sim.ents.find((e) => e.alive && e.caste === "worker" && e.job === "harvest") ?? sim.find(sim.selectedId);
         const r = w ? sim.routes.get(w.id) : undefined;
@@ -737,11 +747,12 @@ function AllyCard({
           <X className="size-4" />
         </button>
       </div>
-      {a.maxHp > 1 && (
-        <p className="mt-1 text-xs tabular-nums text-muted">
-          {a.hp}/{a.maxHp} hp
-        </p>
-      )}
+          {a.maxHp > 1 && (
+            <p className="mt-1 text-xs tabular-nums text-muted">
+              {a.hp}/{a.maxHp} hp
+              {a.foodMax > 0 ? ` · feed ${a.food}/${a.foodMax}` : ""}
+            </p>
+          )}
 
       {groups.map((g) => {
         const cmds = a.commands.filter((c) => c.group === g.id);
@@ -951,7 +962,7 @@ function AssignPanel({
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block font-medium capitalize">{u.label}{u.winged ? " · wings" : ""}</span>
-                <span className="text-xs capitalize text-muted">{u.job === "none" ? "idle" : u.job} · {u.hp}/{u.maxHp}</span>
+                <span className="text-xs capitalize text-muted">{u.job === "none" ? "idle" : u.job} · feed {u.food}/{u.foodMax}</span>
               </span>
             </button>
           ))}

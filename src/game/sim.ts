@@ -1,5 +1,6 @@
 import {
   HARVEST_R,
+  FEED_NEST_R,
   DIFFICULTIES,
   NEST_PERIM,
   NEST_POS,
@@ -730,6 +731,8 @@ export class Sim {
 			caste: "defender",
 			evo: "biter",
 			job: "guard",
+			foodMeter: 48,
+			foodMax: 48,
 			homeX: hx,
 			homeY: hy,
 			...extra
@@ -748,6 +751,8 @@ export class Sim {
 			caste: "attacker",
 			evo: "biter",
 			job: "rove",
+			foodMeter: 44,
+			foodMax: 44,
 			homeX: hx,
 			homeY: hy,
 			...extra
@@ -1050,7 +1055,7 @@ export class Sim {
 		if (e.winged) spd *= 1.35;
 		if (e.evo === "siege") spd *= .72;
 		if (e.evo === "tank") spd *= .78;
-		if (e.foodMeter < 12 && e.caste === "worker") spd *= .55;
+		if (e.foodMeter < e.foodMax * 0.22) spd *= 0.62;
 		if (e.hibernating) spd *= 1.1;
 		return spd;
 	}
@@ -1434,7 +1439,117 @@ export class Sim {
 				this.note("Larder is thin. Harvest, or the army will starve into sleep.");
 			}
 		}
-		for (const e of this.ents) if (e.caste === "worker" && e.job !== "hibernate") e.foodMeter = Math.max(0, e.foodMeter - (e.evoSpd > 0 ? .35 : .55));
+		this.tickHunger();
+	}
+	hungerDrain(e: Ent) {
+		let d = 0.4;
+		if (e.kind === "queen") d = 0.55;
+		else if (e.caste === "worker") d = e.evo === "harvester" ? 0.38 : 0.32;
+		else if (e.caste === "defender") d = 0.42;
+		else if (e.evo === "tank" || e.evo === "siege") d = 0.62;
+		else if (e.caste === "attacker") d = 0.48;
+		if (e.winged) d += 0.1;
+		return d;
+	}
+	nestBound(e: Ent) {
+		if (e.kind === "queen") return false;
+		if (e.caste === "defender") return true;
+		if (e.caste === "worker" && (e.job === "none" || e.job === "build" || e.job === "guard")) return true;
+		if (e.caste === "attacker" && (e.job === "guard" || e.garrisonId)) return true;
+		return false;
+	}
+	atNest(e: Ent) {
+		const n = this.nest();
+		return Boolean(n && Math.hypot(e.x - n.x, e.y - n.y) < FEED_NEST_R);
+	}
+	needsFeed(e: Ent) {
+		return e.foodMax > 0 && e.foodMeter < e.foodMax * 0.42;
+	}
+	starving(e: Ent) {
+		return e.foodMax > 0 && e.foodMeter < e.foodMax * 0.16;
+	}
+	canEatKill(e: Ent) {
+		if (this.nestBound(e) && this.inPerim(e.x, e.y)) return false;
+		return true;
+	}
+	tickHunger() {
+		for (const e of this.ents) {
+			if (!e.alive || e.faction !== "spider") continue;
+			if (e.kind !== "brood" && e.kind !== "queen") continue;
+			if (e.hibernating) {
+				if (this.atNest(e)) this.sipNest(e);
+				if (e.foodMeter > e.foodMax * 0.55) {
+					e.hibernating = false;
+					if (e.job === "hibernate") e.job = e.caste === "worker" ? "none" : e.caste === "defender" ? "guard" : "rove";
+				}
+				continue;
+			}
+			if (e.stage === "chrysalis") continue;
+			e.foodMeter = Math.max(0, e.foodMeter - this.hungerDrain(e));
+			if (e.foodMeter <= 0 && e.kind === "brood") {
+				e.hibernating = true;
+				e.job = "hibernate";
+				this.note("A brood starved and crawled home to sleep.");
+			}
+			if (this.atNest(e) && e.foodMeter < e.foodMax) this.sipNest(e);
+		}
+	}
+	sipNest(e: Ent) {
+		if (!this.atNest(e) || e.foodMeter >= e.foodMax - 0.5) return false;
+		if (this.food < 1) return false;
+		this.food -= 1;
+		e.foodMeter = Math.min(e.foodMax, e.foodMeter + 16);
+		this.pop(e.x, e.y - 18, "Feed", "#c9a227");
+		return true;
+	}
+	eatKill(e: Ent, meat: Ent) {
+		if (!meat.alive || (meat.kind !== "pickup" && meat.kind !== "cocoon")) return false;
+		if (!this.canEatKill(e)) return false;
+		const need = e.foodMax - e.foodMeter;
+		if (need <= 0.5) return false;
+		const bite = Math.min(need, Math.max(8, meat.meat * 10));
+		e.foodMeter = Math.min(e.foodMax, e.foodMeter + bite);
+		meat.meat -= Math.max(1, Math.round(bite / 10));
+		this.pop(e.x, e.y - 16, "Feed", "#c9a227");
+		this.audio?.deposit();
+		if (meat.meat <= 0) meat.alive = false;
+		return true;
+	}
+	closestKill(e: Ent) {
+		let best: Ent | undefined;
+		let bd = Infinity;
+		for (const o of this.ents) {
+			if (!o.alive || o.kind !== "pickup" && o.kind !== "cocoon") continue;
+			if ((o.meat || 0) <= 0) continue;
+			const d = dist2(e, o);
+			if (d < bd) {
+				bd = d;
+				best = o;
+			}
+		}
+		return best;
+	}
+	seekFeed(e: Ent, dt: number) {
+		if (!this.needsFeed(e) || e.hibernating || e.stage === "chrysalis") return false;
+		if (this.canEatKill(e)) {
+			const kill = this.closestKill(e);
+			if (kill) {
+				if (Math.hypot(e.x - kill.x, e.y - kill.y) < e.r + kill.r + 10) this.eatKill(e, kill);
+				else this.seek(e, kill, dt);
+				return true;
+			}
+		}
+		if (this.nestBound(e) || this.starving(e) || this.inPerim(e.x, e.y) && this.food >= 1) {
+			const n = this.nest();
+			if (!n) return false;
+			if (this.atNest(e)) {
+				this.hold(e, dt);
+				return true;
+			}
+			this.seek(e, n, dt);
+			return true;
+		}
+		return false;
 	}
 	tickHives(dt: number) {
 		this.respawnTick += dt;
@@ -2458,6 +2573,8 @@ export class Sim {
 			q.vx = mx * q.speed;
 			q.vy = my * q.speed;
 			if (!this.hasAim) q.facing = Math.atan2(my, mx);
+		} else if (this.needsFeed(q) && this.seekFeed(q, dt)) {
+			/* sip or eat */
 		} else if (this.hasRally) {
 			if (Math.hypot(this.rallyX - q.x, this.rallyY - q.y) < 18) this.hasRally = false;
 			else this.seek(q, {
@@ -2576,11 +2693,14 @@ export class Sim {
 			this.aiTeen(e, dt);
 			return;
 		}
+		const alert = this.threat();
+		if (!(alert && !this.starving(e) && (e.caste === "defender" || e.caste === "attacker"))) {
+			if (this.seekFeed(e, dt)) return;
+		}
 		if (e.caste === "worker") {
 			this.aiWorker(e, dt);
 			return;
 		}
-		const alert = this.threat();
 		if (e.caste === "defender") {
 			if (alert) {
 				this.seek(e, alert, dt);
@@ -2996,14 +3116,31 @@ export class Sim {
 		}
 	}
 	gatherPickups(dt: number) {
-		const q = this.queen();
-		for (const e of this.ents) {
-			if (!e.alive || e.kind !== "pickup" && e.kind !== "cocoon") continue;
-			if (q && Math.hypot(q.x - e.x, q.y - e.y) < q.r + e.r + 8) {
-				this.gainFood(this.yieldAmt(e.meat));
-				this.gainMat(this.yieldAmt(Math.max(1, Math.floor(e.meat / 3))));
-				e.alive = false;
-				this.pop(e.x, e.y, `+${e.meat}`, "#e8ebe4");
+		void dt;
+		for (const meat of this.ents) {
+			if (!meat.alive || meat.kind !== "pickup" && meat.kind !== "cocoon") continue;
+			let eater: Ent | undefined;
+			let best = 40 * 40;
+			for (const e of this.ents) {
+				if (!e.alive || e.faction !== "spider") continue;
+				if (e.kind !== "brood" && e.kind !== "queen") continue;
+				if (!this.canEatKill(e) || e.foodMeter >= e.foodMax - 1) continue;
+				const d = dist2(e, meat);
+				if (d < best) {
+					best = d;
+					eater = e;
+				}
+			}
+			if (eater && Math.hypot(eater.x - meat.x, eater.y - meat.y) < eater.r + meat.r + 12) {
+				this.eatKill(eater, meat);
+				continue;
+			}
+			const q = this.queen();
+			if (q && !this.needsFeed(q) && Math.hypot(q.x - meat.x, q.y - meat.y) < q.r + meat.r + 8) {
+				this.gainFood(this.yieldAmt(meat.meat));
+				this.gainMat(this.yieldAmt(Math.max(1, Math.floor(meat.meat / 3))));
+				meat.alive = false;
+				this.pop(meat.x, meat.y, `+${meat.meat}`, "#e8ebe4");
 				this.audio?.deposit();
 			}
 		}
@@ -3160,6 +3297,8 @@ export class Sim {
 				skill: sel.skill,
 				meat: Math.max(sel.meat, sel.haul),
 				unearthed: sel.unearthed,
+				food: Math.ceil(sel.foodMeter),
+				foodMax: sel.foodMax,
 				commands: this.selection().some((e) => e.id === sel.id && (e.kind === "brood" || e.kind === "queen"))
 					? this.commandsForSelection()
 					: this.commandsFor(sel),
@@ -3179,6 +3318,8 @@ export class Sim {
 					skill: 0,
 					meat: 0,
 					unearthed: false,
+					food: 0,
+					foodMax: 0,
 					commands: this.commandsForSelection(),
 					roster: [],
 				}
@@ -3198,6 +3339,8 @@ export class Sim {
 					maxHp: e.maxHp,
 					winged: e.winged,
 					selected: this.selectedIds.includes(e.id) || e.id === this.selectedId,
+					food: Math.ceil(e.foodMeter),
+					foodMax: e.foodMax,
 				})),
 			orders: this.commandsForSelection(),
 		};

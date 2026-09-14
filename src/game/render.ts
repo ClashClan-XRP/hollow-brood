@@ -79,15 +79,23 @@ function drawProp(
 }
 
 function hpBar(ctx: CanvasRenderingContext2D, e: Ent, yOff: number, color: string) {
-  if (e.hp >= e.maxHp * 0.98) return;
   const w = Math.max(22, e.draw * 0.55);
   const h = 4;
   const x = e.x - w / 2;
   const y = e.y + yOff;
-  ctx.fillStyle = "rgba(11,16,14,0.7)";
-  ctx.fillRect(x, y, w, h);
-  ctx.fillStyle = color;
-  ctx.fillRect(x, y, w * clamp01(e.hp / e.maxHp), h);
+  if (e.hp < e.maxHp * 0.98) {
+    ctx.fillStyle = "rgba(11,16,14,0.7)";
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y, w * clamp01(e.hp / e.maxHp), h);
+  }
+  if (e.faction === "spider" && (e.kind === "brood" || e.kind === "queen") && e.foodMax > 0 && e.foodMeter < e.foodMax * 0.96) {
+    const fy = y + (e.hp < e.maxHp * 0.98 ? 5 : 0);
+    ctx.fillStyle = "rgba(11,16,14,0.7)";
+    ctx.fillRect(x, fy, w, 3);
+    ctx.fillStyle = e.foodMeter < e.foodMax * 0.22 ? "#c45c4c" : "#c9a227";
+    ctx.fillRect(x, fy, w * clamp01(e.foodMeter / e.foodMax), 3);
+  }
 }
 
 function clamp01(v: number) {

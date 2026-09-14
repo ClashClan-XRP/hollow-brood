@@ -126,6 +126,7 @@ export class Sim {
 	queenId = 0;
 	nestId = 0;
 	selectedId = 0;
+	selectedIds: number[] = [];
 	selectedRoom: RoomType = "hatchery";
 	webCd = 0;
 	venomCd = 0;
@@ -256,6 +257,7 @@ export class Sim {
 		this.overReason = "";
 		this.view = "world";
 		this.selectedId = 0;
+		this.selectedIds = [];
 		this.selectedRoom = "hatchery";
 		this.looking = 0;
 		this.marking = false;
@@ -522,7 +524,8 @@ export class Sim {
 		this.bakeNav();
 		this.clampCamera();
 		this.mode = "playing";
-		this.note("Walk east. A fruit tree is already in scent. Click it to send a harvester — or lay one for 3 food.");
+		this.selectOnly(queen.id);
+		this.note("Queen is selected. Harvest the fruit tree to the east — or lay a worker for 3 food.");
 		this.audio?.wave();
 	}
 	seedHive(id: string) {
@@ -635,14 +638,15 @@ export class Sim {
 		const home = this.linkedNodes()[0] ?? NEST_POS;
 		const hx = extra.homeX ?? home.x;
 		const hy = extra.homeY ?? home.y;
-		if (caste === "worker") return this.make("brood", "spider", x, y, {
-			r: 11,
+		if (caste === "worker") {
+			const w = this.make("brood", "spider", x, y, {
+			r: 16,
 			hp: 22,
 			maxHp: 22,
 			speed: 62,
 			dmg: 0,
 			range: 0,
-			draw: 32,
+			draw: 36,
 			caste: "worker",
 			evo: "none",
 			job: "none",
@@ -651,30 +655,37 @@ export class Sim {
 			homeX: hx,
 			homeY: hy,
 			...extra
-		});
-		if (caste === "defender") return this.make("brood", "spider", x, y, {
-			r: 13,
+			});
+			this.selectOnly(w.id);
+			return w;
+		}
+		if (caste === "defender") {
+			const d = this.make("brood", "spider", x, y, {
+			r: 16,
 			hp: 40,
 			maxHp: 40,
 			speed: 70,
 			dmg: 7,
 			range: 20,
-			draw: 38,
+			draw: 40,
 			caste: "defender",
 			evo: "biter",
 			job: "guard",
 			homeX: hx,
 			homeY: hy,
 			...extra
-		});
-		return this.make("brood", "spider", x, y, {
-			r: 12,
+			});
+			this.selectOnly(d.id);
+			return d;
+		}
+		const a = this.make("brood", "spider", x, y, {
+			r: 16,
 			hp: 30,
 			maxHp: 30,
 			speed: 88,
 			dmg: 8,
 			range: 20,
-			draw: 36,
+			draw: 38,
 			caste: "attacker",
 			evo: "biter",
 			job: "rove",
@@ -682,6 +693,8 @@ export class Sim {
 			homeY: hy,
 			...extra
 		});
+		this.selectOnly(a.id);
+		return a;
 	}
 	queen() {
 		return this.ents.find((e) => e.id === this.queenId && e.alive);
@@ -1411,7 +1424,7 @@ export class Sim {
 	tryBuildTower() {
 		const b = this.selectedBuilder();
 		if (!b) {
-			this.note("Select a builder. The queen does not raise posts.");
+			this.note("Select a builder or the queen, then raise a post.");
 			return;
 		}
 		const cost = this.towerCost();
@@ -1437,8 +1450,11 @@ export class Sim {
 		this.pop(b.x, b.y - 24, "Tower", "#e8ebe4");
 	}
 	selectedBuilder() {
-		const e = this.find(this.selectedId);
-		if (e && e.alive && e.caste === "worker" && e.evo === "builder") return e;
+		for (const id of this.selectedIds.length ? this.selectedIds : [this.selectedId]) {
+			const e = this.find(id);
+			if (e && e.alive && e.caste === "worker" && e.evo === "builder") return e;
+			if (e && e.alive && e.kind === "queen") return e;
+		}
 		return undefined;
 	}
 	bestBuilderSkill() {
@@ -1498,62 +1514,100 @@ export class Sim {
 		this.note(n ? `${n} attackers attend the queen.` : "No attackers nearby to assign.");
 	}
 	assignWorker(kind: "harvester" | "builder") {
-		const e = this.find(this.selectedId);
-		if (!e || !e.alive || e.faction !== "spider" || e.caste !== "worker") {
-			this.note("Select a worker first.");
+		const targets = this.selection().filter((e) => e.kind === "queen" || e.caste === "worker");
+		if (!targets.length) {
+			this.note("Select the queen or a worker first.");
 			return;
 		}
-		if (e.hibernating) {
-			this.note("Sleeping brood will not take orders.");
-			return;
-		}
-		if (kind === "harvester") {
-			if (e.evo !== "harvester") {
-				e.evo = "harvester";
-				e.evoSpd += 1;
-				e.foodMax += 20;
-				e.speed += 10;
+		for (const e of targets) {
+			if (e.hibernating) continue;
+			if (kind === "harvester") {
+				if (e.caste === "worker" && e.evo !== "harvester") {
+					e.evo = "harvester";
+					e.evoSpd += 1;
+					e.foodMax += 20;
+					e.speed += 10;
+				}
+				e.job = "harvest";
+				e.assignR = 0;
+			} else {
+				if (e.caste === "worker" && e.evo !== "builder") {
+					e.evo = "builder";
+					e.maxHp += 10;
+					e.hp += 10;
+				}
+				e.job = "build";
+				e.assignR = 0;
 			}
-			e.job = "harvest";
-			e.assignR = 0;
-			this.marking = false;
-			this.note("Harvester takes forage inside the silk net. Mark a patch to send them beyond it.");
-			return;
 		}
-		if (e.evo !== "builder") {
-			e.evo = "builder";
-			e.maxHp += 10;
-			e.hp += 10;
-		}
-		e.job = "build";
-		e.assignR = 0;
 		this.marking = false;
-		this.note("Builder holds the hollow and raises silk posts.");
+		this.note(kind === "harvester" ? "Harvesting the silk net. Mark a patch to send them farther." : "Building. Raise a post, or they repair the hollow.");
 	}
 	assignAttacker(job: Job) {
-		const e = this.find(this.selectedId);
-		if (!e || !e.alive || e.caste !== "attacker") {
-			this.note("Select an attacker first.");
+		this.assignDuty(job);
+	}
+	assignDuty(job: Job) {
+		const targets = this.selection().filter((e) => e.kind === "queen" || e.caste === "attacker" || e.caste === "defender");
+		if (!targets.length) {
+			this.note("Select the queen, an attacker, or a defender.");
 			return;
 		}
-		e.job = job;
+		for (const e of targets) e.job = job;
 		this.marking = false;
-		this.note(job === "follow" ? "Attacker attends the queen." : job === "guard" ? "Attacker holds this ground." : "Attacker roves the perimeter.");
+		this.note(job === "follow" ? "They attend the queen." : job === "guard" ? "They hold the nest." : "They hunt.");
+	}
+	queenHarvestSelected() {
+		const res = this.find(this.selectedId);
+		const q = this.queen();
+		if (!q || !res || !this.isResource(res)) {
+			this.note("Select forage first.");
+			return;
+		}
+		q.job = "harvest";
+		q.assignX = res.x;
+		q.assignY = res.y;
+		q.assignR = 80;
+		q.targetId = res.id;
+		this.note("The queen walks the forage.");
 	}
 	beginMarkHarvest() {
-		const e = this.find(this.selectedId);
-		if (!e || e.caste !== "worker" || (e.evo !== "harvester" && e.job !== "harvest")) {
-			this.note("Select a harvester, then mark a patch.");
+		const e = this.selection().find((s) => s.kind === "queen" || s.caste === "worker");
+		if (!e) {
+			this.note("Select the queen or a harvester, then mark a patch.");
 			return;
 		}
+		if (e.caste === "worker" && e.evo !== "harvester" && e.job !== "harvest") {
+			e.evo = "harvester";
+			e.job = "harvest";
+		} else if (e.kind === "queen") e.job = "harvest";
 		this.marking = true;
 		this.note("Click the woods. They will harvest that patch and walk it home.");
 	}
 	clearMark() {
 		this.marking = false;
 	}
+	selectOnly(id: number) {
+		this.selectedId = id;
+		this.selectedIds = id ? [id] : [];
+		this.marking = false;
+	}
+	toggleUnit(id: number) {
+		if (this.selectedIds.includes(id)) {
+			this.selectedIds = this.selectedIds.filter((x) => x !== id);
+			this.selectedId = this.selectedIds[this.selectedIds.length - 1] ?? 0;
+		} else {
+			this.selectedIds = [...this.selectedIds, id];
+			this.selectedId = id;
+		}
+		this.marking = false;
+	}
+	selection() {
+		const ids = this.selectedIds.length ? this.selectedIds : this.selectedId ? [this.selectedId] : [];
+		return ids.map((id) => this.find(id)).filter((e): e is Ent => Boolean(e));
+	}
 	deselect() {
 		this.selectedId = 0;
+		this.selectedIds = [];
 		this.marking = false;
 	}
 	clickWorld(x: number, y: number) {
@@ -1563,18 +1617,17 @@ export class Sim {
 			return;
 		}
 		if (this.marking) {
-			const e = this.find(this.selectedId);
-			if (e && e.alive && e.caste === "worker") {
-				if (e.evo !== "harvester") {
+			const e = this.selection().find((s) => s.kind === "queen" || s.caste === "worker");
+			if (e && e.alive) {
+				if (e.caste === "worker" && e.evo !== "harvester") {
 					e.evo = "harvester";
-					e.job = "harvest";
 				}
+				e.job = "harvest";
 				e.assignX = x;
 				e.assignY = y;
 				e.assignR = HARVEST_R;
-				e.job = "harvest";
 				this.marking = false;
-				this.note("Harvester walks the patch. When it is stripped, they return home.");
+				this.note("Harvest marked. They walk the patch and bring it home.");
 				this.pop(x, y, "Harvest", "#b7c96a");
 				return;
 			}
@@ -1582,8 +1635,7 @@ export class Sim {
 		}
 		const hit = this.pickClick(x, y);
 		if (hit) {
-			this.selectedId = hit.id;
-			this.marking = false;
+			this.selectOnly(hit.id);
 			if (hit.kind === "hive" && this.hiveOpen(hit)) {
 				this.note("Hive stands empty. Enter to take what they stored.");
 			}
@@ -1592,19 +1644,27 @@ export class Sim {
 		this.deselect();
 	}
 	pickClick(x: number, y: number) {
-		let best;
-		let bestD = 70 * 70;
+		let best: Ent | undefined;
+		let bestScore = Infinity;
 		for (const e of this.ents) {
 			if (!e.alive) continue;
-			const resource = e.kind === "fruit" || e.kind === "node" || e.kind === "solar" || e.kind === "battery" || e.kind === "scrap" || e.kind === "loot" || e.kind === "pickup";
-			const unit = e.faction === "spider" && (e.kind === "brood" || e.kind === "tower" || e.kind === "nest");
+			const resource = this.isResource(e);
+			const unit = e.faction === "spider" && (e.kind === "brood" || e.kind === "queen");
+			const nest = e.kind === "nest";
+			const tower = e.kind === "tower";
 			const hive = e.kind === "hive";
-			if (!resource && !unit && !hive) continue;
-			const pad = resource || hive ? 36 : 12;
-			const d = dist2(e, { x, y });
-			const lim = (e.r + pad) * (e.r + pad);
-			if (d < lim && d < bestD) {
-				bestD = d;
+			if (!resource && !unit && !nest && !tower && !hive) continue;
+			const pad = unit ? 40 : resource || hive ? 38 : nest ? 18 : 16;
+			const d = Math.hypot(e.x - x, e.y - y);
+			if (d > e.r + pad) continue;
+			let score = d;
+			if (unit) score -= 48;
+			else if (resource) score += 6;
+			else if (tower) score += 12;
+			else if (hive) score += 18;
+			else if (nest) score += 80;
+			if (score < bestScore) {
+				bestScore = score;
 				best = e;
 			}
 		}
@@ -1629,13 +1689,13 @@ export class Sim {
 				best = e;
 			}
 		});
-		if (bd < 0.08) this.selectedId = best.id;
+		if (bd < 0.08) this.selectOnly(best.id);
 		else this.deselect();
 	}
 	evolveSelected(evo: Evo) {
 		const e = this.find(this.selectedId);
-		if (!e || e.faction !== "spider" || e.kind !== "brood") {
-			this.note("Select a brood.");
+		if (!e || e.faction !== "spider" || (e.kind !== "brood" && e.kind !== "queen")) {
+			this.note("Select a brood or the queen.");
 			return;
 		}
 		const opt = this.evoFor(e).find((o) => o.id === evo);
@@ -1646,6 +1706,26 @@ export class Sim {
 		}
 		this.food -= opt.costF;
 		this.material -= opt.costM;
+		if (e.kind === "queen") {
+			e.evo = evo;
+			if (evo === "air") {
+				e.winged = true;
+				e.speed += 28;
+			}
+			if (evo === "melee") {
+				e.evoBite += 1;
+				e.dmg += 5;
+				e.speed += 8;
+			}
+			if (evo === "tank") {
+				e.evoHp += 1;
+				e.maxHp += 40;
+				e.hp += 40;
+			}
+			this.pop(e.x, e.y, opt.label, "#b7c96a");
+			this.note(`The Matriarch takes ${opt.label}.`);
+			return;
+		}
 		e.stage = "chrysalis";
 		e.ttl = 7;
 		e.evo = evo;
@@ -1708,6 +1788,13 @@ export class Sim {
 		this.note("Winged builders hitch transporters to the harvest.");
 	}
 	evoFor(e: Ent) {
+		if (e.kind === "queen" && e.stage === "adult") {
+			const out = [];
+			if (e.evoBite < 2) out.push({ id: "melee", label: "Fangs", costF: 8, costM: 0 });
+			if (e.evoHp < 2) out.push({ id: "tank", label: "Carapace", costF: 10, costM: 0 });
+			if (!e.winged) out.push({ id: "air", label: "Wings", costF: 12, costM: 0 });
+			return out;
+		}
 		if (e.caste === "worker") {
 			const out = [];
 			if (e.evo !== "builder") out.push({
@@ -1790,7 +1877,14 @@ export class Sim {
 		const broodFull = this.allyCount() >= this.broodMax();
 		if (this.isResource(e)) {
 			const out: CommandOpt[] = [];
-			const idle = this.ents.find((w) => w.alive && w.caste === "worker" && w.evo !== "builder" && w.haul === 0);
+			const q = this.queen();
+			out.push(this.opt(
+				"queen-harvest",
+				"Queen harvests",
+				"order",
+				Boolean(q),
+				q ? "" : "No queen.",
+			));
 			if (!this.ents.some((w) => w.alive && w.caste === "worker")) {
 				out.push(this.opt(
 					"lay-worker",
@@ -1862,6 +1956,33 @@ export class Sim {
 				this.opt("lay-defender", "Lay defender", "order", atNest && food >= this.defendCost() && !broodFull, !atNest ? "Queen must be at the hollow." : broodFull ? "Hatchery is full." : `Need ${this.defendCost()} food.`, this.defendCost(), 0),
 			];
 		}
+		if (e.kind === "queen" && e.stage === "adult") {
+			const out: CommandOpt[] = [
+				this.opt("harvest", "Harvest", "order", true, ""),
+				this.opt("builder", "Build", "order", true, ""),
+				this.opt("guard", "Defend", "order", true, ""),
+				this.opt("rove", "Attack", "order", true, ""),
+				this.opt("mark", "Mark patch", "order", true, ""),
+				this.opt(
+					"raise-tower",
+					"Raise tower",
+					"build",
+					mat >= this.towerCost(),
+					mat >= this.towerCost() ? "" : `Need ${this.towerCost()} material.`,
+					0,
+					this.towerCost(),
+				),
+				this.opt("lay-worker", "Lay worker", "order", atNest && food >= this.workerCost() && !broodFull, !atNest ? "Queen must be at the hollow." : broodFull ? "Hatchery is full." : `Need ${this.workerCost()} food.`, this.workerCost(), 0),
+				this.opt("lay-defender", "Lay defender", "order", atNest && food >= this.defendCost() && !broodFull, !atNest ? "Queen must be at the hollow." : broodFull ? "Hatchery is full." : `Need ${this.defendCost()} food.`, this.defendCost(), 0),
+				this.opt("lay-attacker", "Lay attacker", "order", atNest && food >= this.attackCost() && !broodFull, !atNest ? "Queen must be at the hollow." : broodFull ? "Hatchery is full." : `Need ${this.attackCost()} food.`, this.attackCost(), 0),
+				this.opt("below", "Go below", "order", atNest || this.view === "nest", "Stand at the hollow."),
+			];
+			for (const ev of this.evoFor(e)) {
+				const ok = food >= ev.costF && mat >= ev.costM;
+				out.push(this.opt(`evo:${ev.id}`, ev.label, "evo", ok, ok ? "" : `Need ${ev.costF} food.`, ev.costF, ev.costM));
+			}
+			return out;
+		}
 		if (e.caste === "worker") {
 			const out: CommandOpt[] = [
 				this.opt("harvest", "Harvester", "order", e.evo !== "builder", e.evo === "builder" ? "This brood is a builder." : ""),
@@ -1926,15 +2047,18 @@ export class Sim {
 		else if (id === "builder") this.assignWorker("builder");
 		else if (id === "mark") this.beginMarkHarvest();
 		else if (id === "follow") this.assignAttacker("follow");
-		else if (id === "rove") this.assignAttacker("rove");
-		else if (id === "guard") this.assignAttacker("guard");
+		else if (id === "rove") this.assignDuty("rove");
+		else if (id === "guard") this.assignDuty("guard");
 		else if (id === "raise-tower") this.tryBuildTower();
 		else if (id === "lay-worker") this.tryLay("worker");
 		else if (id === "lay-defender") this.tryLay("defender");
+		else if (id === "lay-attacker") this.tryLay("attacker");
 		else if (id === "electric") this.evolveTower("electric");
 		else if (id === "siegehold") this.evolveTower("siegehold");
 		else if (id === "garrison") this.garrisonSelected();
 		else if (id === "enter-hive") this.enterSelectedHive();
+		else if (id === "queen-harvest") this.queenHarvestSelected();
+		else if (id === "below") this.toggleNest();
 	}
 	sendHarvester(id: number) {
 		const res = this.find(this.selectedId);
@@ -2183,7 +2307,28 @@ export class Sim {
 				x: this.rallyX,
 				y: this.rallyY
 			}, dt);
+		} else if (q.job === "harvest") {
+			this.queenForage(q, dt);
+		} else if (q.job === "build") {
+			const n = this.nest();
+			if (n && Math.hypot(q.x - n.x, q.y - n.y) > 70) this.seek(q, n, dt);
+			else this.hold(q, dt);
+		} else if (q.job === "guard") {
+			const n = this.nest();
+			const foe = n ? this.closestHostile(n, NEST_PERIM + 40) : this.closestHostile(q, 180);
+			if (foe) {
+				this.seek(q, foe, dt);
+				this.tryAttack(q, foe);
+			} else if (n && Math.hypot(q.x - n.x, q.y - n.y) > 80) this.seek(q, n, dt);
+			else this.hold(q, dt);
+		} else if (q.job === "rove") {
+			const foe = this.closestHostile(q, 260);
+			if (foe) {
+				this.seek(q, foe, dt);
+				this.tryAttack(q, foe);
+			} else this.hold(q, dt);
 		} else this.hold(q, dt);
+		this.queenGather(q);
 		this.lastQueenSpeed = Math.hypot(q.vx, q.vy);
 		if (this.hasAim && this.view === "world") q.facing = Math.atan2(this.aimWy - q.y, this.aimWx - q.x);
 		if (actions.attack && this.view === "world") {
@@ -2228,6 +2373,37 @@ export class Sim {
 			this.venomCd = 1.2;
 			this.audio?.bite();
 		}
+	}
+	queenGather(q: Ent) {
+		for (const o of this.ents) {
+			if (!o.alive || !this.yieldKind(o)) continue;
+			if ((o.meat || 0) <= 0 && (o.haul || 0) <= 0) continue;
+			if (Math.hypot(q.x - o.x, q.y - o.y) > q.r + o.r + 18) continue;
+			const food = o.meat > 0;
+			const take = Math.min(8, food ? o.meat : o.haul || 4);
+			if (food) {
+				o.meat -= take;
+				this.food = Math.min(this.cap("food"), this.food + take);
+				this.pop(o.x, o.y - 20, `+${take}f`, "#b7c96a");
+			} else {
+				o.haul = Math.max(0, o.haul - take);
+				this.material = Math.min(this.cap("material"), this.material + take);
+				this.pop(o.x, o.y - 20, `+${take}m`, "#e8ebe4");
+			}
+			this.audio?.deposit();
+			if (o.meat <= 0 && o.haul <= 0 && o.site !== "unique") o.alive = false;
+			break;
+		}
+	}
+	queenForage(q: Ent, dt: number) {
+		let node = q.assignR > 0 ? this.closestYield(q, q.assignX, q.assignY, q.assignR) : this.closestYieldInNet(q);
+		if (!node && q.targetId) node = this.find(q.targetId);
+		if (!node) {
+			this.hold(q, dt);
+			return;
+		}
+		if (Math.hypot(q.x - node.x, q.y - node.y) < 28) this.hold(q, dt);
+		else this.seek(q, node, dt);
 	}
 	aiAlly(e: Ent, dt: number) {
 		if (e.hibernating) {
@@ -2830,6 +3006,15 @@ export class Sim {
 			marking: this.marking,
 			builderSel: Boolean(this.selectedBuilder()),
 			hiveName: this.view === "hive" ? "Taken hive" : "",
+			units: this.ents
+				.filter((e) => e.alive && e.faction === "spider" && (e.kind === "queen" && e.stage === "adult" || e.kind === "brood"))
+				.map((e) => ({
+					id: e.id,
+					label: e.kind === "queen" ? "Queen" : e.evo !== "none" && e.evo !== "biter" ? `${e.caste} · ${e.evo}` : e.caste,
+					caste: e.caste,
+					job: e.job,
+					selected: this.selectedIds.includes(e.id) || e.id === this.selectedId,
+				})),
 		};
 	}
 	selectLabel(sel: Ent) {
@@ -2841,6 +3026,7 @@ export class Sim {
 		if (sel.kind === "node") return "Forage";
 		if (sel.kind === "pickup") return "Kill meat";
 		if (sel.kind === "tower") return sel.evo === "siegehold" ? "Siege nest" : sel.evo === "electric" ? "Electric post" : sel.linked ? "Silk post" : "Mute post";
+		if (sel.kind === "queen") return sel.stage === "adolescent" ? "Princess" : "Matriarch";
 		if (sel.kind === "hive") return this.hiveOpen(sel) ? "Empty hive" : "Enemy hive";
 		if (sel.kind === "nest") return "The hollow";
 		return `${sel.caste}${sel.evo !== "none" && sel.evo !== "biter" ? ` · ${sel.evo}` : ""}${sel.winged ? " · wings" : ""}`;

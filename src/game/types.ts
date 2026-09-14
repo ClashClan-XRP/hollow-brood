@@ -254,6 +254,14 @@ export type RosterSnap = {
   busy: boolean;
 };
 
+export type UnitSnap = {
+  id: number;
+  label: string;
+  caste: Caste;
+  job: Job;
+  selected: boolean;
+};
+
 export type AllySnap = {
   id: number;
   kind: Kind;
@@ -323,6 +331,7 @@ export type HudSnap = {
   marking: boolean;
   builderSel: boolean;
   hiveName: string;
+  units: UnitSnap[];
 };
 
 export type ControlsProbe = {

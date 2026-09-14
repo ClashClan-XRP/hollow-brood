@@ -654,13 +654,18 @@ export function render(
     }
   }
 
-  const sel = sim.find(sim.selectedId);
-  if (sel && sel.alive) {
+  const selected = new Set(sim.selectedIds.length ? sim.selectedIds : sim.selectedId ? [sim.selectedId] : []);
+  for (const id of selected) {
+    const unit = sim.find(id);
+    if (!unit || !unit.alive) continue;
     ctx.strokeStyle = "rgba(183,201,106,0.95)";
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(sel.x, sel.y, Math.max(18, sel.r + 10), 0, Math.PI * 2);
+    ctx.arc(unit.x, unit.y, Math.max(18, unit.r + 10), 0, Math.PI * 2);
     ctx.stroke();
+  }
+  const sel = sim.find(sim.selectedId);
+  if (sel && sel.alive) {
     if (sel.assignR > 0) {
       ctx.setLineDash([5, 8]);
       ctx.strokeStyle = "rgba(183,201,106,0.55)";

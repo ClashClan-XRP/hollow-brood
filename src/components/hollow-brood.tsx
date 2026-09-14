@@ -61,6 +61,7 @@ function emptyHud(): HudSnap {
     marking: false,
     builderSel: false,
     hiveName: "",
+    units: [],
   };
 }
 
@@ -345,6 +346,10 @@ export function HollowBrood() {
             simRef.current.runCommand(id);
             setHud(simRef.current.hud());
           }}
+          onToggleUnit={(id) => {
+            simRef.current.toggleUnit(id);
+            setHud(simRef.current.hud());
+          }}
           onDeselect={() => {
             simRef.current.deselect();
             setHud(simRef.current.hud());
@@ -421,7 +426,7 @@ function TitleOverlay({
             Hollow Brood
           </h1>
           <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted sm:text-base">
-            Walk the queen into the woods. Click a fruit tree to send a harvester — or lay one at the hollow for 3 food. Silk-link towers builders raise. Expand the nest below, or the larder will starve the army.
+            Walk the queen into the fruit tree, or tap Harvest on her card. Toggle units below, then pick a duty.
           </p>
         </header>
         <div className="grid grid-cols-3 gap-3">
@@ -445,7 +450,7 @@ function TitleOverlay({
           })}
         </div>
         <p className="text-xs text-muted">
-          WASD move · click a unit or fruit tree · Q silk splice · Space bite
+          WASD move · toggle units below · Harvest on the queen card starts the larder
         </p>
         <div className="grid grid-cols-3 gap-2">
           <div className="rounded-xl border border-border bg-surface/80 px-3 py-2">
@@ -482,6 +487,7 @@ function Hud({
   onExpand,
   onCommand,
   onDeselect,
+  onToggleUnit,
 }: {
   hud: HudSnap;
   miniRef: RefObject<HTMLCanvasElement | null>;
@@ -492,6 +498,7 @@ function Hud({
   onExpand: (room: RoomType) => void;
   onCommand: (id: string) => void;
   onDeselect: () => void;
+  onToggleUnit: (id: number) => void;
 }) {
   return (
     <div data-ui className="pointer-events-none absolute inset-0 z-10">
@@ -604,7 +611,7 @@ function Hud({
         </div>
       )}
 
-      <CommandBar hud={hud} onHold={onHold} />
+      <CommandBar hud={hud} onHold={onHold} onToggleUnit={onToggleUnit} />
     </div>
   );
 }
@@ -755,9 +762,11 @@ function Meter({
 function CommandBar({
   hud,
   onHold,
+  onToggleUnit,
 }: {
   hud: HudSnap;
   onHold: (name: string, down: boolean) => void;
+  onToggleUnit: (id: number) => void;
 }) {
   const press = (name: string) => ({
     onPointerDown: (e: PointerEvent) => {
@@ -772,67 +781,43 @@ function CommandBar({
     onPointerCancel: () => onHold(name, false),
   });
   return (
-    <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-6 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+    <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-4 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
       <div className="pointer-events-none mb-1 size-24 shrink-0 rounded-full border-2 border-border/80 bg-surface/40" />
 
-      <div className="pointer-events-auto flex items-end gap-8">
-        <div className="flex flex-col gap-3">
-          <RoundBtn
-            label="Worker"
-            hotkey="E"
-            icon={<Hammer />}
-            disabled={hud.food < hud.workerCost || hud.brood >= hud.broodMax}
-            {...press("egg")}
-          />
-          <RoundBtn
-            label="Attack"
-            hotkey="R"
-            icon={<Swords />}
-            disabled={hud.food < hud.attackCost || hud.brood >= hud.broodMax}
-            {...press("attackEgg")}
-          />
-          <RoundBtn
-            label="Defend"
-            hotkey="F"
-            icon={<Shield />}
-            disabled={hud.food < hud.defendCost || hud.brood >= hud.broodMax}
-            {...press("defend")}
-          />
+      <div className="pointer-events-auto min-w-0 flex-1 max-w-md">
+        <p className="mb-1 text-xs font-medium uppercase tracking-[0.16em] text-muted">Units</p>
+        <div className="flex max-h-28 flex-wrap gap-2 overflow-y-auto pr-1">
+          {hud.units.map((u) => (
+            <button
+              key={u.id}
+              type="button"
+              onClick={() => onToggleUnit(u.id)}
+              className={cn(
+                "min-h-11 rounded-lg border px-2.5 py-1.5 text-left text-xs leading-tight",
+                u.selected ? "border-accent bg-surface-elevated text-foreground" : "border-border bg-surface text-muted",
+              )}
+            >
+              <span className="block font-medium capitalize text-foreground">{u.label}</span>
+              <span className="capitalize">{u.job === "none" ? "idle" : u.job}</span>
+            </button>
+          ))}
         </div>
+      </div>
 
-        <div className="flex flex-col gap-3">
+      <div className="pointer-events-auto flex flex-col items-end gap-3">
+        <div className="flex gap-3">
+          <RoundBtn label="Attend" hotkey="C" icon={<Flag />} {...press("follow")} />
           <RoundBtn
-            label="Heir"
-            hotkey="G"
-            icon={<Crown />}
-            disabled={hud.food < hud.queenCost || hud.brood >= hud.broodMax}
-            {...press("queenEgg")}
+            label={hud.canLink ? "Splice" : "Silk"}
+            hotkey="Q"
+            icon={<Webhook />}
+            cool={hud.webCd}
+            ready={hud.canLink}
+            {...press("web")}
           />
-          <RoundBtn
-            label="Tower"
-            hotkey="B"
-            icon={<Landmark />}
-            disabled={!hud.builderSel || hud.material < hud.towerCost}
-            {...press("tower")}
-          />
-          <RoundBtn label="Nest" hotkey="N" icon={<Home />} disabled={!hud.nestNear && hud.view !== "nest"} {...press("nest")} />
+          <RoundBtn label="Venom" hotkey="V" icon={<Crosshair />} cool={hud.venomCd} {...press("venom")} />
         </div>
-
-        <div className="flex flex-col items-end gap-3">
-          <div className="flex gap-3">
-            <RoundBtn label="Attend" hotkey="C" icon={<Flag />} {...press("follow")} />
-            <RoundBtn
-              label={hud.canLink ? "Splice" : "Silk"}
-              hotkey="Q"
-              icon={<Webhook />}
-              cool={hud.webCd}
-              ready={hud.canLink}
-              {...press("web")}
-            />
-            <RoundBtn label="Venom" hotkey="V" icon={<Crosshair />} cool={hud.venomCd} {...press("venom")} />
-          </div>
-          <RoundBtn label="Bite" hotkey="Space" icon={<Swords />} large {...press("bite")} />
-        </div>
+        <RoundBtn label="Bite" hotkey="Space" icon={<Swords />} large {...press("bite")} />
       </div>
     </div>
   );

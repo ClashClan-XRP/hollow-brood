@@ -1,5 +1,30 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
   <rect width="100" height="100" rx="22" fill="#0b100e"/>
-  <circle cx="50" cy="50" r="28" fill="none" stroke="#e8ebe4" stroke-width="8"/>
-  <circle cx="50" cy="50" r="8" fill="#c9d0c4"/>
+  <!-- nest mound -->
+  <ellipse cx="50" cy="78" rx="38" ry="16" fill="#1c2418"/>
+  <path d="M18 76 C28 58 38 50 50 48 C62 50 72 58 82 76 C70 86 30 86 18 76Z" fill="#2a3324"/>
+  <path d="M32 72 C40 62 46 58 50 57 C54 58 60 62 68 72 C60 76 40 76 32 72Z" fill="#3a4530"/>
+  <!-- silk hints -->
+  <path d="M24 70 Q50 62 76 70" fill="none" stroke="#c9d0c4" stroke-width="1.2" opacity="0.45"/>
+  <path d="M30 64 Q50 56 70 64" fill="none" stroke="#c9d0c4" stroke-width="1" opacity="0.3"/>
+  <!-- queen abdomen -->
+  <ellipse cx="50" cy="46" rx="14" ry="18" fill="#d5dcc8"/>
+  <ellipse cx="50" cy="48" rx="7" ry="11" fill="#c45c4c" opacity="0.55"/>
+  <!-- cephalothorax -->
+  <ellipse cx="50" cy="30" rx="9" ry="8" fill="#8a4034"/>
+  <ellipse cx="50" cy="28" rx="5" ry="4" fill="#c45c4c"/>
+  <!-- legs -->
+  <g fill="none" stroke="#c9d0c4" stroke-width="2.2" stroke-linecap="round">
+    <path d="M42 32 L22 22 L16 14"/>
+    <path d="M58 32 L78 22 L84 14"/>
+    <path d="M40 36 L18 38 L10 34"/>
+    <path d="M60 36 L82 38 L90 34"/>
+    <path d="M40 42 L20 52 L14 62"/>
+    <path d="M60 42 L80 52 L86 62"/>
+    <path d="M42 46 L28 62 L24 74"/>
+    <path d="M58 46 L72 62 L76 74"/>
+  </g>
+  <!-- palps -->
+  <path d="M46 24 L42 16" fill="none" stroke="#8a4034" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M54 24 L58 16" fill="none" stroke="#8a4034" stroke-width="1.8" stroke-linecap="round"/>
 </svg>
